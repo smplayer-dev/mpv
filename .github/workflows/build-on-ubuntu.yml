@@ -1,7 +1,7 @@
 name: Build ubuntu packages
 env:
-  version: '0.33.1'
-  branch: 'mod-0.33'
+  version: '0.34.0'
+  branch: 'mod-0.34'
 
 on:
   workflow_dispatch:

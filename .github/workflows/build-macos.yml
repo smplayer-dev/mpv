@@ -1,0 +1,58 @@
+name: Build mpv on MacOS
+env:
+  branch: 'mod-0.33'
+
+on: 
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: macos-10.15
+    #runs-on: macos-11
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ env.branch }}
+
+      - name: Install dependencies
+        run: |
+            brew install yasm nasm pkg-config libass ffmpeg create-dmg
+            brew install luajit --HEAD
+
+      - name: Build
+        run: |
+            ./bootstrap.py
+            ./waf configure
+            ./waf
+            TOOLS/osxbundle.py build/mpv
+
+      - name: Build package
+        run: |
+            mkdir release
+            cp -r build/mpv.app release
+            #create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv.dmg release
+            #rm -rf release/mpv.app
+            #mv mpv.dmg release/
+            cd release
+            tar -cjf mpv-macos.tar.bz2 *
+
+      - name: Create artifact
+        #if: ${{ false }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: mpv-macos.tar.bz2
+          path: ./release/mpv-macos.tar.bz2
+
+      - name: Upload package to release
+        if: github.event_name == 'release'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./release/mpv-macos.tar.bz2
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true

@@ -32,27 +32,37 @@ jobs:
 
       - name: Build package
         run: |
-            mkdir release
+            mkdir -p release
             cp -r build/mpv.app release
-            #create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv.dmg release
-            #rm -rf release/mpv.app
-            #mv mpv.dmg release/
             cd release
             tar -cjf mpv-macos.tar.bz2 *
+            mv mpv-macos.tar.bz2 ..
 
-      - name: Create artifact
+      - name: Build Apple Disk Image
+        run: |
+            brew install create-dmg
+            create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv.dmg release
+
+      - name: Create artifact 1
         #if: ${{ false }}
         uses: actions/upload-artifact@v2
         with:
           name: mpv-macos.tar.bz2
-          path: ./release/mpv-macos.tar.bz2
+          path: ./mpv-macos.tar.bz2
+
+      - name: Create artifact 2
+        #if: ${{ false }}
+        uses: actions/upload-artifact@v2
+        with:
+         name: mpv.dmg
+         path: ./mpv.dmg
 
       - name: Upload package to release
         if: github.event_name == 'release'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ./release/mpv-macos.tar.bz2
+          file: ./mpv-macos.tar.bz2
           tag: ${{ github.ref }}
           overwrite: true
           file_glob: true

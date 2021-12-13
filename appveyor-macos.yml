@@ -1,0 +1,39 @@
+version: 1.0.{build}-{branch}
+image: macos-mojave
+#image: macos
+
+environment:
+  global:
+    HOMEBREW_NO_INSTALL_CLEANUP: 1
+    CURL_SSL_BACKEND: 'secure-transport'
+    HOMEBREW_FORCE_BREWED_CURL: 1
+    HOMEBREW_NO_AUTO_UPDATE: 1
+
+branches:
+  only:
+    - mod-0.34
+    
+install: |-
+  export PATH="/usr/local/Cellar/pkg-config/0.29.2_3/bin:${PATH}"
+  brew install create-dmg
+  brew install yasm nasm libass ffmpeg
+  brew install luajit --HEAD
+  
+build_script: |-
+  ./bootstrap.py
+  ./waf configure
+  ./waf
+  TOOLS/osxbundle.py build/mpv
+
+after_build: |-
+  mkdir release
+  cp -r build/mpv.app release
+  create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv-10.14.dmg release
+  cd release
+  tar -cjf ../mpv-macos-10.14.tar.bz2 *
+
+artifacts:
+- path: mpv-10.14.dmg
+  name: mpv-10.14.dmg
+- path: mpv-macos-10.14.tar.bz2
+  name: mpv-macos-10.14.tar.bz2

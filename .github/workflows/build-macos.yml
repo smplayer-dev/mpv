@@ -1,6 +1,6 @@
 name: Build mpv on MacOS
 env:
-  branch: 'mod-0.33'
+  branch: 'mod-0.34'
 
 on: 
   workflow_dispatch:
@@ -20,8 +20,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-            brew install yasm nasm pkg-config libass ffmpeg create-dmg
-            brew install luajit --HEAD
+            brew install yasm nasm pkg-config libass ffmpeg
+            brew install libarchive luajit-openresty mujs uchardet
+            #brew install luajit --HEAD
+            install_name_tool -change "@loader_path/libbrotlicommon.1.dylib" "/usr/local/opt/brotli/lib/libbrotlicommon.1.dylib" /usr/local/opt/brotli/lib/libbrotlidec.1.dylib
+            install_name_tool -change "@loader_path/libbrotlicommon.1.dylib" "/usr/local/opt/brotli/lib/libbrotlicommon.1.dylib" /usr/local/opt/brotli/lib/libbrotlienc.1.dylib
+            PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/opt/libarchive/lib/pkgconfig:/usr/local/opt/luajit-openresty/lib/pkgconfig
+            echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Build
         run: |
@@ -35,34 +40,33 @@ jobs:
             mkdir -p release
             cp -r build/mpv.app release
             cd release
-            tar -cjf mpv-macos.tar.bz2 *
-            mv mpv-macos.tar.bz2 ..
+            tar -cjf ../mpv-macos-10.15.tar.bz2 *
 
       - name: Build Apple Disk Image
         run: |
             brew install create-dmg
-            create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv.dmg release
+            create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv-10.15.dmg release
 
       - name: Create artifact 1
         #if: ${{ false }}
         uses: actions/upload-artifact@v2
         with:
-          name: mpv-macos.tar.bz2
-          path: ./mpv-macos.tar.bz2
+          name: mpv-macos-10.15.tar.bz2
+          path: ./mpv-macos-10.15.tar.bz2
 
       - name: Create artifact 2
         #if: ${{ false }}
         uses: actions/upload-artifact@v2
         with:
-         name: mpv.dmg
-         path: ./mpv.dmg
+         name: mpv-10.15.dmg
+         path: ./mpv-10.15.dmg
 
       - name: Upload package to release
         if: github.event_name == 'release'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ./mpv-macos.tar.bz2
+          file: ./mpv-macos-10.15.tar.bz2
           tag: ${{ github.ref }}
           overwrite: true
           file_glob: true

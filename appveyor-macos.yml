@@ -1,4 +1,4 @@
-version: 1.0.{build}-{branch}
+version: 0.34.b{build}-{branch}
 image: macos-mojave
 #image: macos
 
@@ -18,7 +18,10 @@ install: |-
   git config --global http.sslVerify false
   brew install create-dmg
   brew install yasm nasm libass ffmpeg
-  brew install luajit --HEAD
+  #brew install luajit --HEAD
+  brew install libarchive luajit-openresty mujs uchardet
+  export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/opt/libarchive/lib/pkgconfig:/usr/local/opt/luajit-openresty/lib/pkgconfig
+  echo $PKG_CONFIG_PATH
   
 build_script: |-
   ./bootstrap.py
@@ -29,12 +32,12 @@ build_script: |-
 after_build: |-
   mkdir release
   cp -r build/mpv.app release
-  create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv-10.14.dmg release
+  create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv-10.14-av.dmg release
   cd release
-  tar -cjf ../mpv-macos-10.14.tar.bz2 *
+  tar -cjf ../mpv-macos-10.14-av.tar.bz2 *
 
 artifacts:
-- path: mpv-10.14.dmg
-  name: mpv-10.14.dmg
-- path: mpv-macos-10.14.tar.bz2
-  name: mpv-macos-10.14.tar.bz2
+- path: mpv-10.14-av.dmg
+  name: mpv-10.14-av.dmg
+- path: mpv-macos-10.14-av.tar.bz2
+  name: mpv-macos-10.14-av.tar.bz2

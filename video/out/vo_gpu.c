@@ -26,8 +26,6 @@
 
 #include <libavutil/common.h>
 
-#include "config.h"
-
 #include "mpv_talloc.h"
 #include "common/common.h"
 #include "misc/bstr.h"
@@ -52,7 +50,6 @@ struct gpu_priv {
 
     int events;
 };
-
 static void resize(struct vo *vo)
 {
     struct gpu_priv *p = vo->priv;
@@ -126,18 +123,18 @@ static int reconfig(struct vo *vo, struct mp_image_params *params)
     return 0;
 }
 
-static void request_hwdec_api(struct vo *vo)
+static void request_hwdec_api(struct vo *vo, void *data)
 {
     struct gpu_priv *p = vo->priv;
-
-    gl_video_load_hwdecs_all(p->renderer, vo->hwdec_devs);
+    gl_video_load_hwdecs_for_img_fmt(p->renderer, vo->hwdec_devs, data);
 }
 
-static void call_request_hwdec_api(void *ctx)
+static void call_request_hwdec_api(void *ctx,
+                                   struct hwdec_imgfmt_request *params)
 {
     // Roundabout way to run hwdec loading on the VO thread.
     // Redirects to request_hwdec_api().
-    vo_control(ctx, VOCTRL_LOAD_HWDEC_API, NULL);
+    vo_control(ctx, VOCTRL_LOAD_HWDEC_API, params);
 }
 
 static void get_and_update_icc_profile(struct gpu_priv *p)
@@ -200,7 +197,7 @@ static int control(struct vo *vo, uint32_t request, void *data)
         return true;
     }
     case VOCTRL_LOAD_HWDEC_API:
-        request_hwdec_api(vo);
+        request_hwdec_api(vo, data);
         return true;
     case VOCTRL_UPDATE_RENDER_OPTS: {
         update_ra_ctx_options(vo);
@@ -266,11 +263,11 @@ static void wait_events(struct vo *vo, int64_t until_time_us)
 }
 
 static struct mp_image *get_image(struct vo *vo, int imgfmt, int w, int h,
-                                  int stride_align)
+                                  int stride_align, int flags)
 {
     struct gpu_priv *p = vo->priv;
 
-    return gl_video_get_image(p->renderer, imgfmt, w, h, stride_align);
+    return gl_video_get_image(p->renderer, imgfmt, w, h, stride_align, flags);
 }
 
 static void uninit(struct vo *vo)
@@ -311,7 +308,7 @@ static int preinit(struct vo *vo)
     vo->hwdec_devs = hwdec_devices_create();
     hwdec_devices_set_loader(vo->hwdec_devs, call_request_hwdec_api, vo);
 
-    gl_video_load_hwdecs(p->renderer, vo->hwdec_devs, false);
+    gl_video_init_hwdecs(p->renderer, vo->hwdec_devs, false);
 
     return 0;
 

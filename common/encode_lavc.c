@@ -23,7 +23,6 @@
 #include <libavutil/avutil.h>
 #include <libavutil/timestamp.h>
 
-#include "config.h"
 #include "encode_lavc.h"
 #include "common/av_common.h"
 #include "common/global.h"
@@ -88,12 +87,12 @@ const struct m_sub_options encode_config = {
             .deprecation_message = "--audio-delay (once unbroken)"},
         {"oaoffset", OPT_FLOAT(aoffset), M_RANGE(-1000000.0, 1000000.0),
             .deprecation_message = "--audio-delay (once unbroken)"},
-        {"orawts", OPT_FLAG(rawts)},
-        {"ovfirst", OPT_FLAG(video_first),
+        {"orawts", OPT_BOOL(rawts)},
+        {"ovfirst", OPT_BOOL(video_first),
             .deprecation_message = "no replacement"},
-        {"oafirst", OPT_FLAG(audio_first),
+        {"oafirst", OPT_BOOL(audio_first),
             .deprecation_message = "no replacement"},
-        {"ocopy-metadata", OPT_FLAG(copy_metadata)},
+        {"ocopy-metadata", OPT_BOOL(copy_metadata)},
         {"oset-metadata", OPT_KEYVALUELIST(set_metadata)},
         {"oremove-metadata", OPT_STRINGLIST(remove_metadata)},
 
@@ -107,7 +106,7 @@ const struct m_sub_options encode_config = {
     },
     .size = sizeof(struct encode_opts),
     .defaults = &(const struct encode_opts){
-        .copy_metadata = 1,
+        .copy_metadata = true,
     },
 };
 
@@ -731,6 +730,7 @@ static void encoder_destroy(void *ptr)
 {
     struct encoder_context *p = ptr;
 
+    av_packet_free(&p->pkt);
     avcodec_free_context(&p->encoder);
     free_stream(p->twopass_bytebuffer);
 }
@@ -910,6 +910,9 @@ bool encoder_init_codec_and_muxer(struct encoder_context *p,
     if (avcodec_parameters_from_context(p->info.codecpar, p->encoder) < 0)
         goto fail;
 
+    p->pkt = av_packet_alloc();
+    MP_HANDLE_OOM(p->pkt);
+
     encode_lavc_add_stream(p, p->encode_lavc_ctx, &p->info, on_ready, ctx);
     if (!p->mux_stream)
         goto fail;
@@ -930,11 +933,9 @@ bool encoder_encode(struct encoder_context *p, AVFrame *frame)
         goto fail;
     }
 
+    AVPacket *packet = p->pkt;
     for (;;) {
-        AVPacket packet = {0};
-        av_init_packet(&packet);
-
-        status = avcodec_receive_packet(p->encoder, &packet);
+        status = avcodec_receive_packet(p->encoder, packet);
         if (status == AVERROR(EAGAIN))
             break;
         if (status < 0 && status != AVERROR_EOF)
@@ -948,7 +949,7 @@ bool encoder_encode(struct encoder_context *p, AVFrame *frame)
         if (status == AVERROR_EOF)
             break;
 
-        encode_lavc_add_packet(p->mux_stream, &packet);
+        encode_lavc_add_packet(p->mux_stream, packet);
     }
 
     return true;

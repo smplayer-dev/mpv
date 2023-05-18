@@ -224,7 +224,7 @@ struct demux_mkv_opts {
     double subtitle_preroll_secs;
     double subtitle_preroll_secs_index;
     int probe_duration;
-    int probe_start_time;
+    bool probe_start_time;
 };
 
 const struct m_sub_options demux_mkv_conf = {
@@ -237,7 +237,7 @@ const struct m_sub_options demux_mkv_conf = {
             M_RANGE(0, DBL_MAX)},
         {"probe-video-duration", OPT_CHOICE(probe_duration,
             {"no", 0}, {"yes", 1}, {"full", 2})},
-        {"probe-start-time", OPT_FLAG(probe_start_time)},
+        {"probe-start-time", OPT_BOOL(probe_start_time)},
         {0}
     },
     .size = sizeof(struct demux_mkv_opts),
@@ -245,7 +245,7 @@ const struct m_sub_options demux_mkv_conf = {
         .subtitle_preroll = 2,
         .subtitle_preroll_secs = 1.0,
         .subtitle_preroll_secs_index = 10.0,
-        .probe_start_time = 1,
+        .probe_start_time = true,
     },
 };
 
@@ -1362,6 +1362,8 @@ static const char *const mkv_video_tags[][2] = {
     {"V_SNOW",              "snow"},
     {"V_AV1",               "av1"},
     {"V_PNG",               "png"},
+    {"V_AVS2",              "avs2"},
+    {"V_AVS3",              "avs3"},
     {0}
 };
 
@@ -1829,8 +1831,14 @@ static const char *const mkv_sub_tag[][2] = {
     { "D_WEBVTT/CAPTIONS",  "webvtt-webm"},
     { "S_TEXT/WEBVTT",      "webvtt"},
     { "S_DVBSUB",           "dvb_subtitle"},
+    { "S_ARIBSUB",          "arib_caption"},
     {0}
 };
+
+static void avcodec_par_destructor(void *p)
+{
+    avcodec_parameters_free(p);
+}
 
 static int demux_mkv_open_sub(demuxer_t *demuxer, mkv_track_t *track)
 {
@@ -1859,6 +1867,38 @@ static int demux_mkv_open_sub(demuxer_t *demuxer, mkv_track_t *track)
     }
     sh->codec->extradata = track->private_data;
     sh->codec->extradata_size = track->private_size;
+
+    if (!strcmp(sh->codec->codec, "arib_caption") && track->private_size >= 3) {
+        struct AVCodecParameters **lavp = talloc_ptrtype(track, lavp);
+
+        talloc_set_destructor(lavp, avcodec_par_destructor);
+
+        struct AVCodecParameters *lav = *lavp = sh->codec->lav_codecpar = avcodec_parameters_alloc();
+        MP_HANDLE_OOM(lav);
+
+        lav->codec_type = AVMEDIA_TYPE_SUBTITLE;
+        lav->codec_id = AV_CODEC_ID_ARIB_CAPTION;
+
+        int component_tag = track->private_data[0];
+        int data_component_id = AV_RB16(track->private_data + 1);
+        switch (data_component_id) {
+        case 0x0008:
+            // [0x30..0x37] are component tags utilized for
+            // non-mobile captioning service ("profile A").
+            if (component_tag >= 0x30 && component_tag <= 0x37)
+                lav->profile = FF_PROFILE_ARIB_PROFILE_A;
+            break;
+        case 0x0012:
+            // component tag 0x87 signifies a mobile/partial reception
+            // (1seg) captioning service ("profile C").
+            if (component_tag == 0x87)
+                lav->profile = FF_PROFILE_ARIB_PROFILE_C;
+            break;
+        }
+        if (lav->profile == FF_PROFILE_UNKNOWN)
+            MP_WARN(demuxer, "ARIB caption profile %02x / %04x not supported.\n",
+                    component_tag, data_component_id);
+    }
 
     demux_add_sh_stream(demuxer, sh);
 

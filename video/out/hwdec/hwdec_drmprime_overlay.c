@@ -26,11 +26,11 @@
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_drm.h>
 
-#include "common.h"
 #include "video/hwdec.h"
 #include "common/msg.h"
 #include "options/m_config.h"
 #include "libmpv/render_gl.h"
+#include "video/out/drm_atomic.h"
 #include "video/out/drm_common.h"
 #include "video/out/drm_prime.h"
 #include "video/out/gpu/hwdec.h"
@@ -131,7 +131,7 @@ static void disable_video_plane(struct ra_hwdec *hw)
         drm_object_set_property(request, p->ctx->drmprime_video_plane, "CRTC_ID", 0);
 
         int ret = drmModeAtomicCommit(p->ctx->fd, request,
-                                  DRM_MODE_ATOMIC_NONBLOCK, NULL);
+                                  0, NULL);
 
         if (ret)
             MP_ERR(hw, "Failed to commit disable plane request (code %d)", ret);
@@ -159,7 +159,7 @@ static int overlay_frame(struct ra_hwdec *hw, struct mp_image *hw_image,
         if (drm_params->atomic_request_ptr) {
             request = *drm_params->atomic_request_ptr;
         } else {
-            MP_ERR(hw, "drm params pointer to atomic request is invalid");
+            MP_ERR(hw, "drm params pointer to atomic request is invalid\n");
             return -1;
         }
     }
@@ -253,8 +253,8 @@ static int init(struct ra_hwdec *hw)
 
     void *tmp = talloc_new(NULL);
     struct drm_opts *opts = mp_get_config_group(tmp, hw->global, &drm_conf);
-    draw_plane = opts->drm_draw_plane;
-    drmprime_video_plane = opts->drm_drmprime_video_plane;
+    draw_plane = opts->draw_plane;
+    drmprime_video_plane = opts->drmprime_video_plane;
     talloc_free(tmp);
 
     struct mpv_opengl_drm_params_v2 *drm_params;
@@ -298,11 +298,16 @@ static int init(struct ra_hwdec *hw)
 
     p->hwctx = (struct mp_hwdec_ctx) {
         .driver_name = hw->driver->name,
+        .hw_imgfmt = IMGFMT_DRMPRIME,
     };
+
+    char *device = drmGetDeviceNameFromFd2(p->ctx->fd);
     if (!av_hwdevice_ctx_create(&p->hwctx.av_device_ref, AV_HWDEVICE_TYPE_DRM,
-                                drmGetDeviceNameFromFd2(p->ctx->fd), NULL, 0)) {
+                                device, NULL, 0)) {
         hwdec_devices_add(hw->devs, &p->hwctx);
     }
+    if (device)
+        free(device);
 
     return 0;
 
@@ -311,8 +316,8 @@ err:
     return -1;
 }
 
-const struct ra_hwdec_driver ra_hwdec_drmprime_drm = {
-    .name = "drmprime-drm",
+const struct ra_hwdec_driver ra_hwdec_drmprime_overlay = {
+    .name = "drmprime-overlay",
     .priv_size = sizeof(struct priv),
     .imgfmts = {IMGFMT_DRMPRIME, 0},
     .init = init,

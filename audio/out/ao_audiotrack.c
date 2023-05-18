@@ -54,7 +54,7 @@ struct priv {
     jfloatArray floatarray;
     jobject bbuf;
 
-    int cfg_pcm_float;
+    bool cfg_pcm_float;
     int cfg_session_id;
 
     bool needs_timestamp_offset;
@@ -648,11 +648,6 @@ static void uninit(struct ao *ao)
         p->timestamp = NULL;
     }
 
-    if (p->chunk) {
-        free(p->chunk);
-        p->chunk = NULL;
-    }
-
     pthread_cond_destroy(&p->wakeup);
     pthread_mutex_destroy(&p->lock);
 
@@ -728,7 +723,7 @@ static int init(struct ao *ao)
     ao->device_buffer = p->size / af_fmt_to_bytes(ao->format);
 
     p->chunksize = p->size;
-    p->chunk = malloc(p->size);
+    p->chunk = talloc_size(ao, p->size);
 
     jobject timestamp = MP_JNI_NEW(AudioTimestamp.clazz, AudioTimestamp.ctor);
     if (!timestamp || MP_JNI_EXCEPTION_LOG(ao) < 0) {
@@ -823,7 +818,7 @@ const struct ao_driver audio_out_audiotrack = {
     .start     = start,
     .priv_size = sizeof(struct priv),
     .options   = (const struct m_option[]) {
-        {"pcm-float", OPT_FLAG(cfg_pcm_float)},
+        {"pcm-float", OPT_BOOL(cfg_pcm_float)},
         {"session-id", OPT_INT(cfg_session_id)},
         {0}
     },

@@ -88,7 +88,7 @@ static int init(struct render_backend *ctx, mpv_render_param *params)
     p->renderer = gl_video_init(p->context->ra, ctx->log, ctx->global);
 
     ctx->hwdec_devs = hwdec_devices_create();
-    gl_video_load_hwdecs(p->renderer, ctx->hwdec_devs, true);
+    gl_video_init_hwdecs(p->renderer, ctx->hwdec_devs, true);
     ctx->driver_caps = VO_CAP_ROTATE90;
     return 0;
 }
@@ -192,11 +192,11 @@ static int render(struct render_backend *ctx, mpv_render_param *params,
 }
 
 static struct mp_image *get_image(struct render_backend *ctx, int imgfmt,
-                                  int w, int h, int stride_align)
+                                  int w, int h, int stride_align, int flags)
 {
     struct priv *p = ctx->priv;
 
-    return gl_video_get_image(p->renderer, imgfmt, w, h, stride_align);
+    return gl_video_get_image(p->renderer, imgfmt, w, h, stride_align, flags);
 }
 
 static void screenshot(struct render_backend *ctx, struct vo_frame *frame,

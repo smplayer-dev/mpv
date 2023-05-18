@@ -106,7 +106,7 @@ struct observe_property {
 };
 
 struct mpv_handle {
-    // -- immmutable
+    // -- immutable
     char name[MAX_CLIENT_NAME];
     struct mp_log *log;
     struct MPContext *mpctx;
@@ -383,15 +383,6 @@ void mpv_set_wakeup_callback(mpv_handle *ctx, void (*cb)(void *d), void *d)
     pthread_mutex_unlock(&ctx->wakeup_lock);
 }
 
-void mpv_suspend(mpv_handle *ctx)
-{
-    MP_ERR(ctx, "mpv_suspend() is deprecated and does nothing.\n");
-}
-
-void mpv_resume(mpv_handle *ctx)
-{
-}
-
 static void lock_core(mpv_handle *ctx)
 {
     mp_dispatch_lock(ctx->mpctx->dispatch);
@@ -552,11 +543,6 @@ static void mp_destroy_client(mpv_handle *ctx, bool terminate)
 void mpv_destroy(mpv_handle *ctx)
 {
     mp_destroy_client(ctx, false);
-}
-
-void mpv_detach_destroy(mpv_handle *ctx)
-{
-    mpv_destroy(ctx);
 }
 
 void mpv_terminate_destroy(mpv_handle *ctx)
@@ -777,7 +763,7 @@ static void send_reply(struct mpv_handle *ctx, uint64_t userdata,
     assert(ctx->reserved_events > 0);
     ctx->reserved_events--;
     if (append_event(ctx, *event, false) < 0)
-        abort(); // not reached
+        MP_ASSERT_UNREACHABLE();
     pthread_mutex_unlock(&ctx->lock);
 }
 
@@ -860,16 +846,9 @@ int mp_client_send_event_dup(struct MPContext *mpctx, const char *client_name,
     return mp_client_send_event(mpctx, client_name, 0, event, event_data.data);
 }
 
-static bool deprecated_events[] = {
-    [MPV_EVENT_TRACKS_CHANGED] = true,
-    [MPV_EVENT_TRACK_SWITCHED] = true,
+const static bool deprecated_events[] = {
     [MPV_EVENT_IDLE] = true,
-    [MPV_EVENT_PAUSE] = true,
-    [MPV_EVENT_UNPAUSE] = true,
     [MPV_EVENT_TICK] = true,
-    [MPV_EVENT_SCRIPT_INPUT_DISPATCH] = true,
-    [MPV_EVENT_METADATA_UPDATE] = true,
-    [MPV_EVENT_CHAPTER_CHANGE] = true,
 };
 
 int mpv_request_event(mpv_handle *ctx, mpv_event_id event, int enable)
@@ -1358,6 +1337,12 @@ int mpv_set_property(mpv_handle *ctx, const char *name, mpv_format format,
     return req.status;
 }
 
+int mpv_del_property(mpv_handle *ctx, const char *name)
+{
+    const char* args[] = { "del", name, NULL };
+    return mpv_command(ctx, args);
+}
+
 int mpv_set_property_string(mpv_handle *ctx, const char *name, const char *data)
 {
     return mpv_set_property(ctx, name, MPV_FORMAT_STRING, &data);
@@ -1607,6 +1592,30 @@ int mpv_unobserve_property(mpv_handle *ctx, uint64_t userdata)
     return count;
 }
 
+static bool property_shared_prefix(const char *a0, const char *b0)
+{
+    bstr a = bstr0(a0);
+    bstr b = bstr0(b0);
+
+    // Treat options and properties as equivalent.
+    bstr_eatstart0(&a, "options/");
+    bstr_eatstart0(&b, "options/");
+
+    // Compare the potentially-common portion
+    if (memcmp(a.start, b.start, MPMIN(a.len, b.len)))
+        return false;
+
+    // If lengths were equal, we're done
+    if (a.len == b.len)
+        return true;
+
+    // Check for a slash in the first non-common byte of the longer string
+    if (a.len > b.len)
+        return a.start[b.len] == '/';
+    else
+        return b.start[a.len] == '/';
+}
+
 // Broadcast that a property has changed.
 void mp_client_property_change(struct MPContext *mpctx, const char *name)
 {
@@ -1620,7 +1629,8 @@ void mp_client_property_change(struct MPContext *mpctx, const char *name)
         struct mpv_handle *client = clients->clients[n];
         pthread_mutex_lock(&client->lock);
         for (int i = 0; i < client->num_properties; i++) {
-            if (client->properties[i]->id == id) {
+            if (client->properties[i]->id == id &&
+                property_shared_prefix(name, client->properties[i]->name)) {
                 client->properties[i]->change_ts += 1;
                 client->has_pending_properties = true;
                 any_pending = true;
@@ -1838,7 +1848,7 @@ int mpv_hook_continue(mpv_handle *ctx, uint64_t id)
 int mpv_load_config_file(mpv_handle *ctx, const char *filename)
 {
     lock_core(ctx);
-    int r = m_config_parse_config_file(ctx->mpctx->mconfig, filename, NULL, 0);
+    int r = m_config_parse_config_file(ctx->mpctx->mconfig, ctx->mpctx->global, filename, NULL, 0);
     unlock_core(ctx);
     if (r == 0)
         return MPV_ERROR_INVALID_PARAMETER;
@@ -2095,21 +2105,14 @@ static const char *const event_table[] = {
     [MPV_EVENT_START_FILE] = "start-file",
     [MPV_EVENT_END_FILE] = "end-file",
     [MPV_EVENT_FILE_LOADED] = "file-loaded",
-    [MPV_EVENT_TRACKS_CHANGED] = "tracks-changed",
-    [MPV_EVENT_TRACK_SWITCHED] = "track-switched",
     [MPV_EVENT_IDLE] = "idle",
-    [MPV_EVENT_PAUSE] = "pause",
-    [MPV_EVENT_UNPAUSE] = "unpause",
     [MPV_EVENT_TICK] = "tick",
-    [MPV_EVENT_SCRIPT_INPUT_DISPATCH] = "script-input-dispatch",
     [MPV_EVENT_CLIENT_MESSAGE] = "client-message",
     [MPV_EVENT_VIDEO_RECONFIG] = "video-reconfig",
     [MPV_EVENT_AUDIO_RECONFIG] = "audio-reconfig",
-    [MPV_EVENT_METADATA_UPDATE] = "metadata-update",
     [MPV_EVENT_SEEK] = "seek",
     [MPV_EVENT_PLAYBACK_RESTART] = "playback-restart",
     [MPV_EVENT_PROPERTY_CHANGE] = "property-change",
-    [MPV_EVENT_CHAPTER_CHANGE] = "chapter-change",
     [MPV_EVENT_QUEUE_OVERFLOW] = "event-queue-overflow",
     [MPV_EVENT_HOOK] = "hook",
 };
@@ -2179,55 +2182,6 @@ mp_client_api_acquire_render_context(struct mp_client_api *ca)
         res = ca->render_context;
     pthread_mutex_unlock(&ca->lock);
     return res;
-}
-
-// Emulation of old opengl_cb API.
-
-#include "libmpv/opengl_cb.h"
-#include "libmpv/render_gl.h"
-
-void mpv_opengl_cb_set_update_callback(mpv_opengl_cb_context *ctx,
-                                       mpv_opengl_cb_update_fn callback,
-                                       void *callback_ctx)
-{
-}
-
-int mpv_opengl_cb_init_gl(mpv_opengl_cb_context *ctx, const char *exts,
-                          mpv_opengl_cb_get_proc_address_fn get_proc_address,
-                          void *get_proc_address_ctx)
-{
-    return MPV_ERROR_NOT_IMPLEMENTED;
-}
-
-int mpv_opengl_cb_draw(mpv_opengl_cb_context *ctx, int fbo, int w, int h)
-{
-    return MPV_ERROR_NOT_IMPLEMENTED;
-}
-
-int mpv_opengl_cb_report_flip(mpv_opengl_cb_context *ctx, int64_t time)
-{
-    return MPV_ERROR_NOT_IMPLEMENTED;
-}
-
-int mpv_opengl_cb_uninit_gl(mpv_opengl_cb_context *ctx)
-{
-    return 0;
-}
-
-int mpv_opengl_cb_render(mpv_opengl_cb_context *ctx, int fbo, int vp[4])
-{
-    return MPV_ERROR_NOT_IMPLEMENTED;
-}
-
-void *mpv_get_sub_api(mpv_handle *ctx, mpv_sub_api sub_api)
-{
-    if (!ctx->mpctx->initialized || sub_api != MPV_SUB_API_OPENGL_CB)
-        return NULL;
-    // Return something non-NULL, as I think most API users will not check
-    // this properly. The other opengl_cb stubs do not use this value.
-    MP_WARN(ctx, "The opengl_cb API is not supported anymore.\n"
-                 "Use the similar API in render.h instead.\n");
-    return "no";
 }
 
 // stream_cb

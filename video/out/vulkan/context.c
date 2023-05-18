@@ -25,9 +25,8 @@ struct vulkan_opts {
     char *device; // force a specific GPU
     int swap_mode;
     int queue_count;
-    int async_transfer;
-    int async_compute;
-    int disable_events;
+    bool async_transfer;
+    bool async_compute;
 };
 
 static int vk_validate_dev(struct mp_log *log, const struct m_option *opt,
@@ -97,9 +96,9 @@ const struct m_sub_options vulkan_conf = {
             {"mailbox",      VK_PRESENT_MODE_MAILBOX_KHR},
             {"immediate",    VK_PRESENT_MODE_IMMEDIATE_KHR})},
         {"vulkan-queue-count", OPT_INT(queue_count), M_RANGE(1, 8)},
-        {"vulkan-async-transfer", OPT_FLAG(async_transfer)},
-        {"vulkan-async-compute", OPT_FLAG(async_compute)},
-        {"vulkan-disable-events", OPT_FLAG(disable_events)},
+        {"vulkan-async-transfer", OPT_BOOL(async_transfer)},
+        {"vulkan-async-compute", OPT_BOOL(async_compute)},
+        {"vulkan-disable-events", OPT_REMOVED("Unused")},
         {0}
     },
     .size = sizeof(struct vulkan_opts),
@@ -162,16 +161,16 @@ bool ra_vk_ctx_init(struct ra_ctx *ctx, struct mpvk_ctx *vk,
     p->params = params;
     p->opts = mp_get_config_group(p, ctx->global, &vulkan_conf);
 
-    assert(vk->ctx);
+    assert(vk->pllog);
     assert(vk->vkinst);
-    vk->vulkan = pl_vulkan_create(vk->ctx, &(struct pl_vulkan_params) {
+    vk->vulkan = pl_vulkan_create(vk->pllog, &(struct pl_vulkan_params) {
         .instance = vk->vkinst->instance,
+        .get_proc_addr = vk->vkinst->get_proc_addr,
         .surface = vk->surface,
         .async_transfer = p->opts->async_transfer,
         .async_compute = p->opts->async_compute,
         .queue_count = p->opts->queue_count,
         .device_name = p->opts->device,
-        .disable_events = p->opts->disable_events,
     });
     if (!vk->vulkan)
         goto error;

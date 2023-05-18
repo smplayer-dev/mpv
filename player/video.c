@@ -21,7 +21,6 @@
 #include <math.h>
 #include <assert.h>
 
-#include "config.h"
 #include "mpv_talloc.h"
 
 #include "common/msg.h"
@@ -176,9 +175,9 @@ int init_video_decoder(struct MPContext *mpctx, struct track *track)
 
     // If possible, set this as parent so the decoder gets the hwdec and DR
     // interfaces.
-    // Note: at least mpv_opengl_cb_uninit_gl() relies on being able to get
-    //       rid of all references to the VO by destroying the VO chain. Thus,
-    //       decoders not linked to vo_chain must not use the hwdec context.
+    // Note: We rely on being able to get rid of all references to the VO by
+    //       destroying the VO chain. Thus, decoders not linked to vo_chain
+    //       must not use the hwdec context.
     if (track->vo_c)
         parent = track->vo_c->filter->f;
 
@@ -276,12 +275,13 @@ void reinit_video_chain_src(struct MPContext *mpctx, struct track *track)
     if (!recreate_video_filters(mpctx))
         goto err_out;
 
+    update_content_type(mpctx, track);
     update_screensaver_state(mpctx);
 
     vo_set_paused(vo_c->vo, get_internal_paused(mpctx));
 
     // If we switch on video again, ensure audio position matches up.
-    if (mpctx->ao_chain && mpctx->ao_chain->ao) {
+    if (mpctx->ao_chain && mpctx->ao_chain->ao && !(track && track->image)) {
         ao_reset(mpctx->ao_chain->ao);
         mpctx->ao_chain->start_pts_known = false;
         mpctx->audio_status = STATUS_SYNCING;
@@ -583,7 +583,7 @@ static void update_avsync_before_frame(struct MPContext *mpctx)
 
     if (mpctx->video_status < STATUS_READY) {
         mpctx->time_frame = 0;
-    } else if (mpctx->display_sync_active || opts->video_sync == VS_NONE) {
+    } else if (mpctx->display_sync_active || vo->opts->video_sync == VS_NONE) {
         // don't touch the timing
     } else if (mpctx->audio_status == STATUS_PLAYING &&
                mpctx->video_status == STATUS_PLAYING &&
@@ -598,7 +598,7 @@ static void update_avsync_before_frame(struct MPContext *mpctx)
 
         if (opts->autosync) {
             /* Smooth reported playback position from AO by averaging
-             * it with the value expected based on previus value and
+             * it with the value expected based on previous value and
              * time elapsed since then. May help smooth video timing
              * with audio output that have inaccurate position reporting.
              * This is badly implemented; the behavior of the smoothing
@@ -665,20 +665,16 @@ double calc_average_frame_duration(struct MPContext *mpctx)
 // effective video FPS. If this is not possible, try to do it for multiples,
 // which still leads to an improved end result.
 // Both parameters are durations in seconds.
-static double calc_best_speed(double vsync, double frame, int max_factor)
+static double calc_best_speed(double vsync, double frame,
+                              double max_change, int max_factor)
 {
     double ratio = frame / vsync;
-    double best_scale = -1;
-    double best_dev = INFINITY;
     for (int factor = 1; factor <= max_factor; factor++) {
         double scale = ratio * factor / rint(ratio * factor);
-        double dev = fabs(scale - 1);
-        if (dev < best_dev) {
-            best_scale = scale;
-            best_dev = dev;
-        }
+        if (fabs(scale - 1) <= max_change)
+            return scale;
     }
-    return best_scale;
+    return -1;
 }
 
 static double find_best_speed(struct MPContext *mpctx, double vsync)
@@ -689,10 +685,15 @@ static double find_best_speed(struct MPContext *mpctx, double vsync)
         double dur = mpctx->past_frames[n].approx_duration;
         if (dur <= 0)
             continue;
-        total += calc_best_speed(vsync, dur / mpctx->opts->playback_speed,
+        double best = calc_best_speed(vsync, dur / mpctx->opts->playback_speed,
+                                 mpctx->opts->sync_max_video_change / 100,
                                  mpctx->opts->sync_max_factor);
+        if (best <= 0)
+            continue;
+        total += best;
         num++;
     }
+    // If it doesn't work, play at normal speed.
     return num > 0 ? total / num : 1;
 }
 
@@ -734,12 +735,14 @@ static double compute_audio_drift(struct MPContext *mpctx, double vsync)
     return (sum_x * sum_y - num * sum_xy) / (sum_x * sum_x - num * sum_xx);
 }
 
-static void adjust_audio_resample_speed(struct MPContext *mpctx, double vsync)
+static void adjust_audio_drift_compensation(struct MPContext *mpctx, double vsync)
 {
     struct MPOpts *opts = mpctx->opts;
-    int mode = opts->video_sync;
+    int mode = mpctx->video_out->opts->video_sync;
 
-    if (mode != VS_DISP_RESAMPLE || mpctx->audio_status != STATUS_PLAYING) {
+    if ((mode != VS_DISP_RESAMPLE && mode != VS_DISP_TEMPO) ||
+        mpctx->audio_status != STATUS_PLAYING)
+    {
         mpctx->speed_factor_a = mpctx->speed_factor_v;
         return;
     }
@@ -797,7 +800,7 @@ static void handle_display_sync_frame(struct MPContext *mpctx,
 {
     struct MPOpts *opts = mpctx->opts;
     struct vo *vo = mpctx->video_out;
-    int mode = opts->video_sync;
+    int mode = vo->opts->video_sync;
 
     if (!mpctx->display_sync_active) {
         mpctx->display_sync_error = 0.0;
@@ -811,7 +814,8 @@ static void handle_display_sync_frame(struct MPContext *mpctx,
     bool resample = mode == VS_DISP_RESAMPLE || mode == VS_DISP_RESAMPLE_VDROP ||
                     mode == VS_DISP_RESAMPLE_NONE;
     bool drop = mode == VS_DISP_VDROP || mode == VS_DISP_RESAMPLE ||
-                mode == VS_DISP_ADROP || mode == VS_DISP_RESAMPLE_VDROP;
+                mode == VS_DISP_ADROP || mode == VS_DISP_RESAMPLE_VDROP ||
+                mode == VS_DISP_TEMPO;
     drop &= frame->can_drop;
 
     if (resample && using_spdif_passthrough(mpctx))
@@ -827,12 +831,8 @@ static void handle_display_sync_frame(struct MPContext *mpctx,
         return;
 
     mpctx->speed_factor_v = 1.0;
-    if (mode != VS_DISP_VDROP) {
-        double best = find_best_speed(mpctx, vsync);
-        // If it doesn't work, play at normal speed.
-        if (fabs(best - 1.0) <= opts->sync_max_video_change / 100)
-            mpctx->speed_factor_v = best;
-    }
+    if (mode != VS_DISP_VDROP)
+        mpctx->speed_factor_v = find_best_speed(mpctx, vsync);
 
     // Determine for how many vsyncs a frame should be displayed. This can be
     // e.g. 2 for 30hz on a 60hz display. It can also be 0 if the video
@@ -898,8 +898,8 @@ static void handle_display_sync_frame(struct MPContext *mpctx,
     mpctx->past_frames[0].num_vsyncs = num_vsyncs;
     mpctx->past_frames[0].av_diff = mpctx->last_av_difference;
 
-    if (resample || mode == VS_DISP_ADROP) {
-        adjust_audio_resample_speed(mpctx, vsync);
+    if (resample || mode == VS_DISP_ADROP || mode == VS_DISP_TEMPO) {
+        adjust_audio_drift_compensation(mpctx, vsync);
     } else {
         mpctx->speed_factor_a = 1.0;
     }

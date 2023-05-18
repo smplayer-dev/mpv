@@ -39,28 +39,52 @@ static const char *const sub_exts[] = {"utf", "utf8", "utf-8", "idx", "sub",
 
 static const char *const audio_exts[] = {"mp3", "aac", "mka", "dts", "flac",
                                          "ogg", "m4a", "ac3", "opus", "wav",
-                                         "wv", "eac3",
+                                         "wv", "eac3", "thd",
                                          NULL};
 
 static const char *const image_exts[] = {"jpg", "jpeg", "png", "gif", "bmp",
-                                         "webp",
+                                         "webp", "jxl", "tiff", "tif", "avif",
                                          NULL};
 
 // Stolen from: vlc/-/blob/master/modules/meta_engine/folder.c#L40
 // sorted by priority (descending)
 static const char *const cover_files[] = {
     "AlbumArt.jpg",
+    "AlbumArt.webp",
+    "AlbumArt.jxl",
+    "AlbumArt.avif",
     "Album.jpg",
+    "Album.webp",
+    "Album.jxl",
+    "Album.avif",
     "cover.jpg",
     "cover.png",
+    "cover.webp",
+    "cover.jxl",
+    "cover.avif",
     "front.jpg",
     "front.png",
+    "front.webp",
+    "front.jxl",
+    "front.avif",
 
     "AlbumArtSmall.jpg",
+    "AlbumArtSmall.webp",
+    "AlbumArtSmall.jxl",
+    "AlbumArtSmall.avif",
     "Folder.jpg",
     "Folder.png",
+    "Folder.webp",
+    "Folder.jxl",
+    "Folder.avif",
     ".folder.png",
+    ".folder.webp",
+    ".folder.jxl",
+    ".folder.avif",
     "thumb.jpg",
+    "thumb.webp",
+    "thumb.jxl",
+    "thumb.avif",
 
     "front.bmp",
     "front.gif",
@@ -246,7 +270,7 @@ static void append_dir_subtitles(struct mpv_global *global, struct MPOpts *opts,
         if (bstr_find(tmp_fname_trim, f_fname_trim) >= 0 && fuzz >= 1)
             prio |= 2; // contains the movie name
 
-        if (type == STREAM_VIDEO && fuzz >= 1 && prio == 0)
+        if (type == STREAM_VIDEO && opts->coverart_whitelist && prio == 0)
             prio = test_cover_filename(dename);
 
         // doesn't contain the movie name
@@ -254,7 +278,7 @@ static void append_dir_subtitles(struct mpv_global *global, struct MPOpts *opts,
         if (!limit_fuzziness && fuzz >= 2)
             prio |= 1;
 
-        mp_dbg(log, "Potential external file: \"%s\"  Priority: %d\n",
+        mp_trace(log, "Potential external file: \"%s\"  Priority: %d\n",
                de->d_name, prio);
 
         if (prio) {

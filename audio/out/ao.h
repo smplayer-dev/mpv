@@ -26,8 +26,7 @@
 #include "audio/chmap_sel.h"
 
 enum aocontrol {
-    // _VOLUME commands take struct ao_control_vol pointer for input/output.
-    // If there's only one volume, SET should use average of left/right.
+    // _VOLUME commands take a pointer to float for input/output.
     AOCONTROL_GET_VOLUME,
     AOCONTROL_SET_VOLUME,
     // _MUTE commands take a pointer to bool
@@ -35,6 +34,8 @@ enum aocontrol {
     AOCONTROL_SET_MUTE,
     // Has char* as argument, which contains the desired stream title.
     AOCONTROL_UPDATE_STREAM_TITLE,
+    // Has enum aocontrol_media_role* argument, which contains the current media role
+    AOCONTROL_UPDATE_MEDIA_ROLE,
 };
 
 // If set, then the queued audio data is the last. Note that after a while, new
@@ -59,10 +60,10 @@ enum {
     AO_INIT_EXCLUSIVE = 1 << 3,
 };
 
-typedef struct ao_control_vol {
-    float left;
-    float right;
-} ao_control_vol_t;
+enum aocontrol_media_role {
+    AOCONTROL_MEDIA_ROLE_MUSIC,
+    AOCONTROL_MEDIA_ROLE_MOVIE,
+};
 
 struct ao_device_desc {
     const char *name;   // symbolic name; will be set on ao->device
@@ -119,8 +120,8 @@ struct ao_hotplug *ao_hotplug_create(struct mpv_global *global,
                                      void *wakeup_ctx);
 void ao_hotplug_destroy(struct ao_hotplug *hp);
 bool ao_hotplug_check_update(struct ao_hotplug *hp);
-struct ao_device_list *ao_hotplug_get_device_list(struct ao_hotplug *hp);
+struct ao_device_list *ao_hotplug_get_device_list(struct ao_hotplug *hp, struct ao *playback_ao);
 
-void ao_print_devices(struct mpv_global *global, struct mp_log *log);
+void ao_print_devices(struct mpv_global *global, struct mp_log *log, struct ao *playback_ao);
 
 #endif /* MPLAYER_AUDIO_OUT_H */

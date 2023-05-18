@@ -126,10 +126,9 @@ static mf_t *open_mf_pattern(void *talloc_ctx, struct demuxer *d, char *filename
 
 #if HAVE_GLOB
     if (!strchr(filename, '%')) {
-        strcpy(fname, filename);
-        if (!strchr(filename, '*'))
-            strcat(fname, "*");
-
+        // append * if none present
+        snprintf(fname, fname_avail, "%s%c", filename,
+            strchr(filename, '*') ? 0 : '*');
         mp_info(log, "search expr: %s\n", fname);
 
         glob_t gg;
@@ -291,6 +290,8 @@ static const struct {
     { "db",             "mjpeg" },
     { "pcd",            "photocd" },
     { "pfm",            "pfm" },
+    { "phm",            "phm" },
+    { "hdr",            "hdr" },
     { "pcx",            "pcx" },
     { "png",            "png" },
     { "pns",            "png" },
@@ -319,6 +320,7 @@ static const struct {
     { "pix",            "brender_pix" },
     { "exr",            "exr" },
     { "pic",            "pictor" },
+    { "qoi",            "qoi" },
     { "xface",          "xface" },
     { "xwd",            "xwd" },
     {0}

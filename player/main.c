@@ -25,6 +25,11 @@
 #include <locale.h>
 
 #include "config.h"
+
+#if HAVE_LIBPLACEBO
+#include <libplacebo/config.h>
+#endif
+
 #include "mpv_talloc.h"
 
 #include "misc/dispatch.h"
@@ -56,7 +61,6 @@
 #include "audio/out/ao.h"
 #include "misc/thread_tools.h"
 #include "sub/osd.h"
-#include "test/tests.h"
 #include "video/out/vo.h"
 
 #include "core.h"
@@ -132,8 +136,12 @@ void mp_update_logging(struct MPContext *mpctx, bool preinit)
         }
     }
 
-    if (mp_msg_has_log_file(mpctx->global) && !had_log_file)
-        mp_print_version(mpctx->log, false); // for log-file=... in config files
+    if (mp_msg_has_log_file(mpctx->global) && !had_log_file) {
+        // for log-file=... in config files.
+        // we did flush earlier messages, but they were in a cyclic buffer, so
+        // the version might have been overwritten. ensure we have it.
+        mp_print_version(mpctx->log, false);
+    }
 
     if (enabled && !preinit && mpctx->opts->consolecontrols)
         terminal_setup_getch(mpctx->input);
@@ -144,6 +152,9 @@ void mp_print_version(struct mp_log *log, int always)
     int v = always ? MSGL_INFO : MSGL_V;
     mp_msg(log, v, "%s %s\n built on %s\n",
            mpv_version, mpv_copyright, mpv_builddate);
+#if HAVE_LIBPLACEBO
+    mp_msg(log, v, "libplacebo version: %s\n", PL_VERSION);
+#endif
     check_library_versions(log, v);
     mp_msg(log, v, "\n");
     // Only in verbose mode.
@@ -204,7 +215,7 @@ static bool handle_help_options(struct MPContext *mpctx)
     if (opts->ao_opts->audio_device &&
         strcmp(opts->ao_opts->audio_device, "help") == 0)
     {
-        ao_print_devices(mpctx->global, log);
+        ao_print_devices(mpctx->global, log, mpctx->ao);
         return true;
     }
     if (opts->property_print_help) {
@@ -220,7 +231,7 @@ static int cfg_include(void *ctx, char *filename, int flags)
 {
     struct MPContext *mpctx = ctx;
     char *fname = mp_get_user_path(NULL, mpctx->global, filename);
-    int r = m_config_parse_config_file(mpctx->mconfig, fname, NULL, flags);
+    int r = m_config_parse_config_file(mpctx->mconfig, mpctx->global, fname, NULL, flags);
     talloc_free(fname);
     return r;
 }
@@ -373,12 +384,9 @@ int mp_initialize(struct MPContext *mpctx, char **options)
 
     check_library_versions(mp_null_log, 0);
 
-#if HAVE_TESTS
-    if (opts->test_mode && opts->test_mode[0])
-        return run_tests(mpctx) ? 1 : -1;
-#endif
-
-    if (!mpctx->playlist->num_entries && !opts->player_idle_mode) {
+    if (!mpctx->playlist->num_entries && !opts->player_idle_mode &&
+        options)
+    {
         // nothing to play
         mp_print_version(mpctx->log, true);
         MP_INFO(mpctx, "%s", mp_help_text);

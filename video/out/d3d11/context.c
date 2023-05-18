@@ -24,6 +24,7 @@
 #include "video/out/gpu/d3d11_helpers.h"
 #include "video/out/gpu/spirv.h"
 #include "video/out/w32_common.h"
+#include "context.h"
 #include "ra_d3d11.h"
 
 static int d3d11_validate_adapter(struct mp_log *log,
@@ -33,12 +34,12 @@ static int d3d11_validate_adapter(struct mp_log *log,
 struct d3d11_opts {
     int feature_level;
     int warp;
-    int flip;
+    bool flip;
     int sync_interval;
     char *adapter_name;
     int output_format;
     int color_space;
-    int exclusive_fs;
+    bool exclusive_fs;
 };
 
 #define OPT_BASE_STRUCT struct d3d11_opts
@@ -58,7 +59,7 @@ const struct m_sub_options d3d11_conf = {
             {"9_3", D3D_FEATURE_LEVEL_9_3},
             {"9_2", D3D_FEATURE_LEVEL_9_2},
             {"9_1", D3D_FEATURE_LEVEL_9_1})},
-        {"d3d11-flip", OPT_FLAG(flip)},
+        {"d3d11-flip", OPT_BOOL(flip)},
         {"d3d11-sync-interval", OPT_INT(sync_interval), M_RANGE(0, 4)},
         {"d3d11-adapter", OPT_STRING_VALIDATE(adapter_name,
                                               d3d11_validate_adapter)},
@@ -74,18 +75,17 @@ const struct m_sub_options d3d11_conf = {
             {"linear",  DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709},
             {"pq",      DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020},
             {"bt.2020", DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020})},
-        {"d3d11-exclusive-fs", OPT_FLAG(exclusive_fs)},
+        {"d3d11-exclusive-fs", OPT_BOOL(exclusive_fs)},
         {0}
     },
     .defaults = &(const struct d3d11_opts) {
         .feature_level = D3D_FEATURE_LEVEL_12_1,
         .warp = -1,
-        .flip = 1,
+        .flip = true,
         .sync_interval = 1,
         .adapter_name = NULL,
         .output_format = DXGI_FORMAT_UNKNOWN,
         .color_space = -1,
-        .exclusive_fs = 0,
     },
     .size = sizeof(struct d3d11_opts)
 };
@@ -165,7 +165,10 @@ static bool resize(struct ra_ctx *ctx)
     struct priv *p = ctx->priv;
     HRESULT hr;
 
-    ra_tex_free(ctx->ra, &p->backbuffer);
+    if (p->backbuffer) {
+        MP_ERR(ctx, "Attempt at resizing while a frame was in progress!\n");
+        return false;
+    }
 
     hr = IDXGISwapChain_ResizeBuffers(p->swapchain, 0, ctx->vo->dwidth,
         ctx->vo->dheight, DXGI_FORMAT_UNKNOWN, 0);
@@ -173,8 +176,6 @@ static bool resize(struct ra_ctx *ctx)
         MP_FATAL(ctx, "Couldn't resize swapchain: %s\n", mp_HRESULT_to_str(hr));
         return false;
     }
-
-    p->backbuffer = get_backbuffer(ctx);
 
     return true;
 }
@@ -188,17 +189,33 @@ static bool d3d11_reconfig(struct ra_ctx *ctx)
 static int d3d11_color_depth(struct ra_swapchain *sw)
 {
     struct priv *p = sw->priv;
+    DXGI_SWAP_CHAIN_DESC desc;
 
-    if (!p->backbuffer)
+    HRESULT hr = IDXGISwapChain_GetDesc(p->swapchain, &desc);
+    if (FAILED(hr)) {
+        MP_ERR(sw->ctx, "Failed to query swap chain description: %s!\n",
+               mp_HRESULT_to_str(hr));
+        return 0;
+    }
+
+    const struct ra_format *ra_fmt =
+        ra_d3d11_get_ra_format(sw->ctx->ra, desc.BufferDesc.Format);
+    if (!ra_fmt)
         return 0;
 
-    return p->backbuffer->params.format->component_depth[0];
+    return ra_fmt->component_depth[0];
 }
 
 static bool d3d11_start_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
 {
     struct priv *p = sw->priv;
 
+    if (!out_fbo)
+        return true;
+
+    assert(!p->backbuffer);
+
+    p->backbuffer = get_backbuffer(sw->ctx);
     if (!p->backbuffer)
         return false;
 
@@ -213,7 +230,10 @@ static bool d3d11_start_frame(struct ra_swapchain *sw, struct ra_fbo *out_fbo)
 static bool d3d11_submit_frame(struct ra_swapchain *sw,
                                const struct vo_frame *frame)
 {
+    struct priv *p = sw->priv;
+
     ra_d3d11_flush(sw->ctx->ra);
+    ra_tex_free(sw->ctx->ra, &p->backbuffer);
     return true;
 }
 
@@ -437,7 +457,7 @@ static void d3d11_uninit(struct ra_ctx *ctx)
     vo_w32_uninit(ctx->vo);
     SAFE_RELEASE(p->device);
 
-    // Destory the RA last to prevent objects we hold from showing up in D3D's
+    // Destroy the RA last to prevent objects we hold from showing up in D3D's
     // leak checker
     if (ctx->ra)
         ctx->ra->fns->destroy(ctx->ra);
@@ -489,6 +509,13 @@ static bool d3d11_init(struct ra_ctx *ctx)
     if (!vo_w32_init(ctx->vo))
         goto error;
 
+    UINT usage = DXGI_USAGE_RENDER_TARGET_OUTPUT | DXGI_USAGE_SHADER_INPUT;
+    if (ID3D11Device_GetFeatureLevel(p->device) >= D3D_FEATURE_LEVEL_11_0 &&
+        p->opts->output_format != DXGI_FORMAT_B8G8R8A8_UNORM)
+    {
+        usage |= DXGI_USAGE_UNORDERED_ACCESS;
+    }
+
     struct d3d11_swapchain_opts scopts = {
         .window = vo_w32_hwnd(ctx->vo),
         .width = ctx->vo->dwidth,
@@ -500,13 +527,9 @@ static bool d3d11_init(struct ra_ctx *ctx)
         // Add one frame for the backbuffer and one frame of "slack" to reduce
         // contention with the window manager when acquiring the backbuffer
         .length = ctx->vo->opts->swapchain_depth + 2,
-        .usage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
+        .usage = usage,
     };
     if (!mp_d3d11_create_swapchain(p->device, ctx->log, &scopts, &p->swapchain))
-        goto error;
-
-    p->backbuffer = get_backbuffer(ctx);
-    if (!p->backbuffer)
         goto error;
 
     return true;
@@ -514,6 +537,18 @@ static bool d3d11_init(struct ra_ctx *ctx)
 error:
     d3d11_uninit(ctx);
     return false;
+}
+
+IDXGISwapChain *ra_d3d11_ctx_get_swapchain(struct ra_ctx *ra)
+{
+    if (ra->swapchain->fns != &d3d11_swapchain)
+        return NULL;
+
+    struct priv *p = ra->priv;
+
+    IDXGISwapChain_AddRef(p->swapchain);
+
+    return p->swapchain;
 }
 
 const struct ra_ctx_fns ra_ctx_d3d11 = {

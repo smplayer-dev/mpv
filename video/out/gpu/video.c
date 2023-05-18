@@ -281,10 +281,7 @@ struct gl_video {
     struct cached_file *files;
     int num_files;
 
-    bool hwdec_interop_loading_done;
-    struct ra_hwdec **hwdecs;
-    int num_hwdecs;
-
+    struct ra_hwdec_ctx hwdec_ctx;
     struct ra_hwdec_mapper *hwdec_mapper;
     struct ra_hwdec *hwdec_overlay;
     bool hwdec_active;
@@ -315,22 +312,20 @@ static const struct gl_video_opts gl_video_opts_def = {
         {{"mitchell", .params={NAN, NAN}}, {.params = {NAN, NAN}},
          .clamp = 1, }, // tscale
     },
-    .scaler_resizes_only = 1,
+    .scaler_resizes_only = true,
     .scaler_lut_size = 6,
     .interpolation_threshold = 0.01,
     .alpha_mode = ALPHA_BLEND_TILES,
     .background = {0, 0, 0, 255},
     .gamma = 1.0f,
     .tone_map = {
-        .curve = TONE_MAPPING_BT_2390,
+        .curve = TONE_MAPPING_AUTO,
         .curve_param = NAN,
         .max_boost = 1.0,
+        .crosstalk = 0.04,
         .decay_rate = 100.0,
         .scene_threshold_low = 5.5,
         .scene_threshold_high = 10.0,
-        .desat = 0.75,
-        .desat_exp = 1.5,
-        .gamut_clipping = 1,
     },
     .early_flush = -1,
     .hwdec_interop = "auto",
@@ -371,20 +366,46 @@ const struct m_sub_options gl_video_conf = {
     .opts = (const m_option_t[]) {
         {"gpu-dumb-mode", OPT_CHOICE(dumb_mode,
             {"auto", 0}, {"yes", 1}, {"no", -1})},
-        {"gamma-factor", OPT_FLOAT(gamma), M_RANGE(0.1, 2.0)},
-        {"gamma-auto", OPT_FLAG(gamma_auto)},
+        {"gamma-factor", OPT_FLOAT(gamma), M_RANGE(0.1, 2.0),
+            .deprecation_message = "no replacement"},
+        {"gamma-auto", OPT_BOOL(gamma_auto),
+            .deprecation_message = "no replacement"},
         {"target-prim", OPT_CHOICE_C(target_prim, mp_csp_prim_names)},
         {"target-trc", OPT_CHOICE_C(target_trc, mp_csp_trc_names)},
         {"target-peak", OPT_CHOICE(target_peak, {"auto", 0}),
             M_RANGE(10, 10000)},
         {"tone-mapping", OPT_CHOICE(tone_map.curve,
+            {"auto",     TONE_MAPPING_AUTO},
             {"clip",     TONE_MAPPING_CLIP},
             {"mobius",   TONE_MAPPING_MOBIUS},
             {"reinhard", TONE_MAPPING_REINHARD},
             {"hable",    TONE_MAPPING_HABLE},
             {"gamma",    TONE_MAPPING_GAMMA},
             {"linear",   TONE_MAPPING_LINEAR},
-            {"bt.2390",  TONE_MAPPING_BT_2390})},
+            {"spline",   TONE_MAPPING_SPLINE},
+            {"bt.2390",  TONE_MAPPING_BT_2390},
+            {"bt.2446a", TONE_MAPPING_BT_2446A},
+            {"st2094-40", TONE_MAPPING_ST2094_40},
+            {"st2094-10", TONE_MAPPING_ST2094_10})},
+        {"tone-mapping-param", OPT_FLOATDEF(tone_map.curve_param)},
+        {"inverse-tone-mapping", OPT_BOOL(tone_map.inverse)},
+        {"tone-mapping-crosstalk", OPT_FLOAT(tone_map.crosstalk),
+            M_RANGE(0.0, 0.3)},
+        {"tone-mapping-max-boost", OPT_FLOAT(tone_map.max_boost),
+            M_RANGE(1.0, 10.0)},
+        {"tone-mapping-mode", OPT_CHOICE(tone_map.mode,
+            {"auto",        TONE_MAP_MODE_AUTO},
+            {"rgb",         TONE_MAP_MODE_RGB},
+            {"max",         TONE_MAP_MODE_MAX},
+            {"hybrid",      TONE_MAP_MODE_HYBRID},
+            {"luma",        TONE_MAP_MODE_LUMA})},
+        {"tone-mapping-visualize", OPT_BOOL(tone_map.visualize)},
+        {"gamut-mapping-mode", OPT_CHOICE(tone_map.gamut_mode,
+            {"auto",        GAMUT_AUTO},
+            {"clip",        GAMUT_CLIP},
+            {"warn",        GAMUT_WARN},
+            {"desaturate",  GAMUT_DESATURATE},
+            {"darken",      GAMUT_DARKEN})},
         {"hdr-compute-peak", OPT_CHOICE(tone_map.compute_peak,
             {"auto", 0},
             {"yes", 1},
@@ -395,25 +416,17 @@ const struct m_sub_options gl_video_conf = {
             M_RANGE(0, 20.0)},
         {"hdr-scene-threshold-high", OPT_FLOAT(tone_map.scene_threshold_high),
             M_RANGE(0, 20.0)},
-        {"tone-mapping-param", OPT_FLOATDEF(tone_map.curve_param)},
-        {"tone-mapping-max-boost", OPT_FLOAT(tone_map.max_boost),
-            M_RANGE(1.0, 10.0)},
-        {"tone-mapping-desaturate", OPT_FLOAT(tone_map.desat)},
-        {"tone-mapping-desaturate-exponent", OPT_FLOAT(tone_map.desat_exp),
-            M_RANGE(0.0, 20.0)},
-        {"gamut-warning", OPT_FLAG(tone_map.gamut_warning)},
-        {"gamut-clipping", OPT_FLAG(tone_map.gamut_clipping)},
-        {"opengl-pbo", OPT_FLAG(pbo)},
+        {"opengl-pbo", OPT_BOOL(pbo)},
         SCALER_OPTS("scale",  SCALER_SCALE),
         SCALER_OPTS("dscale", SCALER_DSCALE),
         SCALER_OPTS("cscale", SCALER_CSCALE),
         SCALER_OPTS("tscale", SCALER_TSCALE),
         {"scaler-lut-size", OPT_INT(scaler_lut_size), M_RANGE(4, 10)},
-        {"scaler-resizes-only", OPT_FLAG(scaler_resizes_only)},
-        {"correct-downscaling", OPT_FLAG(correct_downscaling)},
-        {"linear-downscaling", OPT_FLAG(linear_downscaling)},
-        {"linear-upscaling", OPT_FLAG(linear_upscaling)},
-        {"sigmoid-upscaling", OPT_FLAG(sigmoid_upscaling)},
+        {"scaler-resizes-only", OPT_BOOL(scaler_resizes_only)},
+        {"correct-downscaling", OPT_BOOL(correct_downscaling)},
+        {"linear-downscaling", OPT_BOOL(linear_downscaling)},
+        {"linear-upscaling", OPT_BOOL(linear_upscaling)},
+        {"sigmoid-upscaling", OPT_BOOL(sigmoid_upscaling)},
         {"sigmoid-center", OPT_FLOAT(sigmoid_center), M_RANGE(0.0, 1.0)},
         {"sigmoid-slope", OPT_FLOAT(sigmoid_slope), M_RANGE(1.0, 20.0)},
         {"fbo-format", OPT_STRING(fbo_format)},
@@ -425,7 +438,7 @@ const struct m_sub_options gl_video_conf = {
             {"error-diffusion", DITHER_ERROR_DIFFUSION},
             {"no", DITHER_NONE})},
         {"dither-size-fruit", OPT_INT(dither_size), M_RANGE(2, 8)},
-        {"temporal-dither", OPT_FLAG(temporal_dither)},
+        {"temporal-dither", OPT_BOOL(temporal_dither)},
         {"temporal-dither-period", OPT_INT(temporal_dither_period),
             M_RANGE(1, 128)},
         {"error-diffusion",
@@ -435,9 +448,9 @@ const struct m_sub_options gl_video_conf = {
             {"yes", ALPHA_YES},
             {"blend", ALPHA_BLEND},
             {"blend-tiles", ALPHA_BLEND_TILES})},
-        {"opengl-rectangle-textures", OPT_FLAG(use_rectangle)},
+        {"opengl-rectangle-textures", OPT_BOOL(use_rectangle)},
         {"background", OPT_COLOR(background)},
-        {"interpolation", OPT_FLAG(interpolation)},
+        {"interpolation", OPT_BOOL(interpolation)},
         {"interpolation-threshold", OPT_FLOAT(interpolation_threshold)},
         {"blend-subtitles", OPT_CHOICE(blend_subs,
             {"no", BLEND_SUBS_NO},
@@ -445,12 +458,14 @@ const struct m_sub_options gl_video_conf = {
             {"video", BLEND_SUBS_VIDEO})},
         {"glsl-shaders", OPT_PATHLIST(user_shaders), .flags = M_OPT_FILE},
         {"glsl-shader", OPT_CLI_ALIAS("glsl-shaders-append")},
-        {"deband", OPT_FLAG(deband)},
+        {"glsl-shader-opts", OPT_KEYVALUELIST(user_shader_opts)},
+        {"deband", OPT_BOOL(deband)},
         {"deband", OPT_SUBSTRUCT(deband_opts, deband_conf)},
         {"sharpen", OPT_FLOAT(unsharp)},
         {"gpu-tex-pad-x", OPT_INT(tex_pad_x), M_RANGE(0, 4096)},
         {"gpu-tex-pad-y", OPT_INT(tex_pad_y), M_RANGE(0, 4096)},
         {"", OPT_SUBSTRUCT(icc_opts, mp_icc_conf)},
+        {"gpu-shader-cache", OPT_BOOL(shader_cache)},
         {"gpu-shader-cache-dir", OPT_STRING(shader_cache_dir), .flags = M_OPT_FILE},
         {"gpu-hwdec-interop",
             OPT_STRING_VALIDATE(hwdec_interop, ra_hwdec_validate_opt)},
@@ -467,6 +482,10 @@ const struct m_sub_options gl_video_conf = {
         {"opengl-gamma", OPT_REPLACED("gamma-factor")},
         {"linear-scaling", OPT_REMOVED("Split into --linear-upscaling and "
                                         "--linear-downscaling")},
+        {"gamut-warning", OPT_REMOVED("Replaced by --gamut-mapping-mode=warn")},
+        {"gamut-clipping", OPT_REMOVED("Replaced by --gamut-mapping-mode=desaturate")},
+        {"tone-mapping-desaturate", OPT_REMOVED("Replaced by --tone-mapping-mode")},
+        {"tone-mapping-desaturate-exponent", OPT_REMOVED("Replaced by --tone-mapping-mode")},
         {0}
     },
     .size = sizeof(struct gl_video_opts),
@@ -872,14 +891,7 @@ static void init_video(struct gl_video *p)
 {
     p->use_integer_conversion = false;
 
-    struct ra_hwdec *hwdec = NULL;
-    for (int n = 0; n < p->num_hwdecs; n++) {
-        if (ra_hwdec_test_format(p->hwdecs[n], p->image_params.imgfmt)) {
-            hwdec = p->hwdecs[n];
-            break;
-        }
-    }
-
+    struct ra_hwdec *hwdec = ra_hwdec_get(&p->hwdec_ctx, p->image_params.imgfmt);
     if (hwdec) {
         if (hwdec->driver->overlay_frame) {
             MP_WARN(p, "Using HW-overlay mode. No GL filtering is performed "
@@ -1327,18 +1339,20 @@ static const char *get_tex_swizzle(struct image *img)
 
 // Copy a texture to the vec4 color, while increasing offset. Also applies
 // the texture multiplier to the sampled color
-static void copy_image(struct gl_video *p, int *offset, struct image img)
+static void copy_image(struct gl_video *p, unsigned int *offset, struct image img)
 {
-    int count = img.components;
-    assert(*offset + count <= 4);
-    assert(img.padding + count <= 4);
-
-    int id = pass_bind(p, img);
+    const unsigned int count = img.components;
     char src[5] = {0};
     char dst[5] = {0};
+
+    assert(*offset + count < sizeof(dst));
+    assert(img.padding + count < sizeof(src));
+
+    int id = pass_bind(p, img);
+
     const char *tex_fmt = get_tex_swizzle(&img);
     const char *dst_fmt = "rgba";
-    for (int i = 0; i < count; i++) {
+    for (unsigned int i = 0; i < count; i++) {
         src[i] = tex_fmt[img.padding + i];
         dst[i] = dst_fmt[*offset + i];
     }
@@ -1396,6 +1410,11 @@ static void hook_prelude(struct gl_video *p, const char *name, int id,
     // Set up the sampling functions
     GLSLHF("#define %s_tex(pos) (%s_mul * vec4(texture(%s_raw, pos)).%s)\n",
            name, name, name, crap);
+
+    if (p->ra->caps & RA_CAP_GATHER) {
+        GLSLHF("#define %s_gather(pos, c) (%s_mul * vec4("
+               "textureGather(%s_raw, pos, c)))\n", name, name, name);
+    }
 
     // Since the extra matrix multiplication impacts performance,
     // skip it unless the texture was actually rotated
@@ -1902,8 +1921,7 @@ static void pass_sample(struct gl_video *p, struct image img,
     } else if (scaler->kernel) {
         pass_sample_separated(p, img, scaler, w, h);
     } else {
-        // Should never happen
-        abort();
+        MP_ASSERT_UNREACHABLE(); // should never happen
     }
 
     // Apply any required multipliers. Separated scaling already does this in
@@ -2318,7 +2336,7 @@ static void pass_convert_yuv(struct gl_video *p)
 
     // Pre-colormatrix input gamma correction
     if (cparams.color.space == MP_CSP_XYZ)
-        GLSL(color.rgb = pow(color.rgb, vec3(2.6));) // linear light
+        pass_linearize(p->sc, p->image_params.color.gamma);
 
     // We always explicitly normalize the range in pass_read_video
     cparams.input_bits = cparams.texture_bits = 0;
@@ -2331,6 +2349,13 @@ static void pass_convert_yuv(struct gl_video *p)
     gl_sc_uniform_vec3(sc, "colormatrix_c", m.c);
 
     GLSL(color.rgb = mat3(colormatrix) * color.rgb + colormatrix_c;)
+
+    if (cparams.color.space == MP_CSP_XYZ) {
+        pass_delinearize(p->sc, p->image_params.color.gamma);
+        // mp_get_csp_matrix implicitly converts XYZ to DCI-P3
+        p->image_params.color.space = MP_CSP_RGB;
+        p->image_params.color.primaries = MP_CSP_PRIM_DCI_P3;
+    }
 
     if (p->image_params.color.space == MP_CSP_BT_2020_C) {
         // Conversion for C'rcY'cC'bc via the BT.2020 CL system:
@@ -2615,6 +2640,47 @@ static void pass_colormanage(struct gl_video *p, struct mp_colorspace src,
     if (!src.sig_peak)
         src.sig_peak = mp_trc_nom_peak(src.gamma);
 
+    // Whitelist supported modes
+    switch (p->opts.tone_map.curve) {
+    case TONE_MAPPING_AUTO:
+    case TONE_MAPPING_CLIP:
+    case TONE_MAPPING_MOBIUS:
+    case TONE_MAPPING_REINHARD:
+    case TONE_MAPPING_HABLE:
+    case TONE_MAPPING_GAMMA:
+    case TONE_MAPPING_LINEAR:
+    case TONE_MAPPING_BT_2390:
+        break;
+    default:
+        MP_WARN(p, "Tone mapping curve unsupported by vo_gpu, falling back.\n");
+        p->opts.tone_map.curve = TONE_MAPPING_AUTO;
+        break;
+    }
+
+    switch (p->opts.tone_map.mode) {
+    case TONE_MAP_MODE_AUTO:
+    case TONE_MAP_MODE_RGB:
+    case TONE_MAP_MODE_MAX:
+    case TONE_MAP_MODE_HYBRID:
+        break;
+    default:
+        MP_WARN(p, "Tone mapping mode unsupported by vo_gpu, falling back.\n");
+        p->opts.tone_map.mode = TONE_MAP_MODE_AUTO;
+        break;
+    }
+
+    switch (p->opts.tone_map.gamut_mode) {
+    case GAMUT_AUTO:
+    case GAMUT_WARN:
+    case GAMUT_CLIP:
+    case GAMUT_DESATURATE:
+        break;
+    default:
+        MP_WARN(p, "Gamut mapping mode unsupported by vo_gpu, falling back.\n");
+        p->opts.tone_map.gamut_mode = GAMUT_AUTO;
+        break;
+    }
+
     struct gl_tone_map_opts tone_map = p->opts.tone_map;
     bool detect_peak = tone_map.compute_peak >= 0 && mp_trc_is_hdr(src.gamma)
                        && src.sig_peak > dst.sig_peak;
@@ -2698,9 +2764,9 @@ static void pass_dither(struct gl_video *p)
 
             struct image img = image_wrap(p->error_diffusion_tex[0], PLANE_RGB, p->components);
 
-            // 1024 is minimal required number of invocation allowed in single
-            // work group in OpenGL. Use it for maximal performance.
-            int block_size = MPMIN(1024, o_h);
+            // Ensure the block size doesn't exceed the maximum of the
+            // implementation.
+            int block_size = MPMIN(p->ra->max_compute_group_threads, o_h);
 
             pass_describe(p, "dither=error-diffusion (kernel=%s, depth=%d)",
                              kernel->name, dst_depth);
@@ -3195,7 +3261,7 @@ static void gl_video_interpolate_frame(struct gl_video *p, struct vo_frame *t,
         }
 
         if (oversample) {
-            // Oversample uses the frame area as mix ratio, not the the vsync
+            // Oversample uses the frame area as mix ratio, not the vsync
             // position itself
             double vsync_dist = t->vsync_interval / t->ideal_frame_duration,
                    threshold = tscale->conf.kernel.params[0];
@@ -3420,6 +3486,7 @@ void gl_video_screenshot(struct gl_video *p, struct vo_frame *frame,
         .downloadable = true,
         .w = p->osd_rect.w,
         .h = p->osd_rect.h,
+        .d = 1,
         .render_dst = true,
     };
 
@@ -3820,7 +3887,7 @@ static void check_gl_features(struct gl_video *p)
                 // p->opts is a copy => we can just mess with it.
                 p->opts.scaler[n].kernel.name = "bilinear";
                 if (n == SCALER_TSCALE)
-                    p->opts.interpolation = 0;
+                    p->opts.interpolation = false;
             }
         }
     }
@@ -3844,7 +3911,7 @@ static void check_gl_features(struct gl_video *p)
         MP_WARN(p, "Disabling color management (GLSL version too old).\n");
     }
     if (!have_mglsl && p->opts.deband) {
-        p->opts.deband = 0;
+        p->opts.deband = false;
         MP_WARN(p, "Disabling debanding (GLSL version too old).\n");
     }
 }
@@ -3869,11 +3936,7 @@ void gl_video_uninit(struct gl_video *p)
         return;
 
     uninit_video(p);
-
-    for (int n = 0; n < p->num_hwdecs; n++)
-        ra_hwdec_uninit(p->hwdecs[n]);
-    p->num_hwdecs = 0;
-
+    ra_hwdec_ctx_uninit(&p->hwdec_ctx);
     gl_sc_destroy(p->sc);
 
     ra_tex_free(p->ra, &p->lut_3d_texture);
@@ -3928,10 +3991,8 @@ bool gl_video_check_format(struct gl_video *p, int mp_format)
     if (ra_get_imgfmt_desc(p->ra, mp_format, &desc) &&
         is_imgfmt_desc_supported(p, &desc))
         return true;
-    for (int n = 0; n < p->num_hwdecs; n++) {
-        if (ra_hwdec_test_format(p->hwdecs[n], mp_format))
-            return true;
-    }
+    if (ra_hwdec_get(&p->hwdec_ctx, mp_format))
+        return true;
     return false;
 }
 
@@ -4039,7 +4100,8 @@ static void reinit_from_options(struct gl_video *p)
 
     check_gl_features(p);
     uninit_rendering(p);
-    gl_sc_set_cache_dir(p->sc, p->opts.shader_cache_dir);
+    if (p->opts.shader_cache)
+        gl_sc_set_cache_dir(p->sc, p->opts.shader_cache_dir);
     p->ra->use_pbo = p->opts.pbo;
     gl_video_setup_hooks(p);
     reinit_osd(p);
@@ -4181,21 +4243,6 @@ static int validate_error_diffusion_opt(struct mp_log *log, const m_option_t *op
     return r;
 }
 
-float gl_video_scale_ambient_lux(float lmin, float lmax,
-                                 float rmin, float rmax, float lux)
-{
-    assert(lmax > lmin);
-
-    float num = (rmax - rmin) * (log10(lux) - log10(lmin));
-    float den = log10(lmax) - log10(lmin);
-    float result = num / den + rmin;
-
-    // clamp the result
-    float max = MPMAX(rmax, rmin);
-    float min = MPMIN(rmax, rmin);
-    return MPMAX(MPMIN(result, max), min);
-}
-
 void gl_video_set_ambient_lux(struct gl_video *p, int lux)
 {
     if (p->opts.gamma_auto) {
@@ -4241,8 +4288,15 @@ static void gl_video_dr_free_buffer(void *opaque, uint8_t *data)
 }
 
 struct mp_image *gl_video_get_image(struct gl_video *p, int imgfmt, int w, int h,
-                                    int stride_align)
+                                    int stride_align, int flags)
 {
+    if (flags & VO_DR_FLAG_HOST_CACHED) {
+        if (p->ra->caps & RA_CAP_SLOW_DR) {
+            MP_VERBOSE(p, "DR path suspected slow/uncached, disabling.\n");
+            return NULL;
+        }
+    }
+
     if (!gl_video_check_format(p, imgfmt))
         return NULL;
 
@@ -4265,45 +4319,22 @@ struct mp_image *gl_video_get_image(struct gl_video *p, int imgfmt, int w, int h
     return res;
 }
 
-static void load_add_hwdec(struct gl_video *p, struct mp_hwdec_devices *devs,
-                           const struct ra_hwdec_driver *drv, bool is_auto)
-{
-    struct ra_hwdec *hwdec =
-        ra_hwdec_load_driver(p->ra, p->log, p->global, devs, drv, is_auto);
-    if (hwdec)
-        MP_TARRAY_APPEND(p, p->hwdecs, p->num_hwdecs, hwdec);
-}
-
-void gl_video_load_hwdecs(struct gl_video *p, struct mp_hwdec_devices *devs,
+void gl_video_init_hwdecs(struct gl_video *p, struct mp_hwdec_devices *devs,
                           bool load_all_by_default)
 {
-    char *type = p->opts.hwdec_interop;
-    if (!type || !type[0] || strcmp(type, "auto") == 0) {
-        if (!load_all_by_default)
-            return;
-        type = "all";
-    }
-    if (strcmp(type, "no") == 0) {
-        // do nothing, just block further loading
-    } else if (strcmp(type, "all") == 0) {
-        gl_video_load_hwdecs_all(p, devs);
-    } else {
-        for (int n = 0; ra_hwdec_drivers[n]; n++) {
-            const struct ra_hwdec_driver *drv = ra_hwdec_drivers[n];
-            if (strcmp(type, drv->name) == 0) {
-                load_add_hwdec(p, devs, drv, false);
-                break;
-            }
-        }
-    }
-    p->hwdec_interop_loading_done = true;
+    assert(!p->hwdec_ctx.ra);
+    p->hwdec_ctx = (struct ra_hwdec_ctx) {
+        .log = p->log,
+        .global = p->global,
+        .ra = p->ra,
+    };
+
+    ra_hwdec_ctx_init(&p->hwdec_ctx, devs, p->opts.hwdec_interop, load_all_by_default);
 }
 
-void gl_video_load_hwdecs_all(struct gl_video *p, struct mp_hwdec_devices *devs)
+void gl_video_load_hwdecs_for_img_fmt(struct gl_video *p, struct mp_hwdec_devices *devs,
+                                      struct hwdec_imgfmt_request *params)
 {
-    if (!p->hwdec_interop_loading_done) {
-        for (int n = 0; ra_hwdec_drivers[n]; n++)
-            load_add_hwdec(p, devs, ra_hwdec_drivers[n], true);
-        p->hwdec_interop_loading_done = true;
-    }
+    assert(p->hwdec_ctx.ra);
+    ra_hwdec_ctx_load_fmt(&p->hwdec_ctx, devs, params);
 }

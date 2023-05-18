@@ -32,12 +32,18 @@
 
 #include <libavutil/avutil.h>
 #include <libavutil/log.h>
+#include <libavutil/version.h>
 
 #include <libavcodec/avcodec.h>
+#include <libavcodec/version.h>
 #include <libavformat/avformat.h>
+#include <libavformat/version.h>
 #include <libswresample/swresample.h>
+#include <libswresample/version.h>
 #include <libswscale/swscale.h>
+#include <libswscale/version.h>
 #include <libavfilter/avfilter.h>
+#include <libavfilter/version.h>
 
 #if HAVE_LIBAVDEVICE
 #include <libavdevice/avdevice.h>
@@ -187,6 +193,7 @@ void check_library_versions(struct mp_log *log, int v)
         {"libswresample", LIBSWRESAMPLE_VERSION_INT, swresample_version()},
     };
 
+    mp_msg(log, v, "FFmpeg version: %s\n", av_version_info());
     mp_msg(log, v, "FFmpeg library versions:\n");
 
     for (int n = 0; n < MP_ARRAY_SIZE(libs); n++) {
@@ -203,8 +210,6 @@ void check_library_versions(struct mp_log *log, int v)
             abort();
         }
     }
-
-    mp_msg(log, v, "FFmpeg version: %s\n", av_version_info());
 }
 
 #undef V

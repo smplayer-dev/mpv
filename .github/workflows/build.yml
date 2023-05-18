@@ -11,48 +11,60 @@ on:
 
 jobs:
   mingw:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         target: [i686-w64-mingw32, x86_64-w64-mingw32]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       # Increase -N suffix here to force full rebuild after changes
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: mingw_prefix/
-          key: "${{ matrix.target }}-1"
+          key: "${{ matrix.target }}-7"
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake pkg-config g++-mingw-w64 gcc-multilib nasm yasm
-          # Meson from apt is too old
-          pip3 install --no-input meson ninja
+          sudo apt-get install -y autoconf automake pkg-config g++-mingw-w64 gcc-multilib python3-pip ninja-build nasm
+          sudo python3 -m pip install meson
           ./bootstrap.py
 
-      - name: Build with meson
+      - name: Build libraries
         run: |
-          ./ci/build-mingw64.sh meson
+          ./ci/build-mingw64.sh
+        env:
+          TARGET: ${{ matrix.target }}
+
+      - name: Build with meson
+        id: build
+        run: |
+          ./ci/build-mingw64.sh meson pack
         env:
           TARGET: ${{ matrix.target }}
 
       - name: Print meson log
-        if: ${{ failure() }}
+        if: ${{ failure() && steps.build.outcome == 'failure' }}
         run: |
-          cat ./${{ matrix.target }}_mingw_build/meson-logs/meson-log.txt
+          cat ./build/meson-logs/meson-log.txt
 
       - name: Build with waf
+        id: build_waf
         run: |
           ./ci/build-mingw64.sh waf
         env:
           TARGET: ${{ matrix.target }}
 
       - name: Print waf log
-        if: ${{ failure() }}
+        if: ${{ failure() && steps.build_waf.outcome == 'failure' }}
         run: |
-          cat ./build/config.log
+          cat ./build_waf/config.log
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: mpv-${{ matrix.target }}
+          path: mpv-git-*.zip
 
   macos:
     runs-on: ${{ matrix.os }}
@@ -61,27 +73,23 @@ jobs:
         cc:
           - "clang"
         os:
-          - "macos-10.15"
           - "macos-11"
+          - "macos-12"
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
-      - name: Override Xcode 13.0 if it's the default toolchain
+      - name: Remove stray upstream python binary symlinks under /usr/local
         run: |
-          XCODE_PATH="$(xcode-select -p)"
-          case "${XCODE_PATH}" in
-            *Xcode_13.0*)
-              sudo xcode-select -s "/Applications/Xcode_13.1.app"
-              echo "Updated Xcode path ${XCODE_PATH} -> $(xcode-select -p)"
-              ;;
-          esac
+          find /usr/local/bin -lname '*/Library/Frameworks/Python.framework/*' -delete -print
+          brew unlink python && brew link --overwrite python
 
       - name: Install dependencies
         run: |
           brew update
-          brew install autoconf automake pkg-config libtool python freetype fribidi little-cms2 luajit libass ffmpeg meson
+          brew install autoconf automake pkg-config libtool python freetype fribidi little-cms2 lua@5.1 libass ffmpeg meson
 
       - name: Build with meson
+        id: build
         run: |
           ./ci/build-macos.sh meson
         env:
@@ -89,11 +97,22 @@ jobs:
           TRAVIS_OS_NAME: "${{ matrix.os }}"
 
       - name: Print meson log
-        if: ${{ failure() }}
+        if: ${{ failure() && steps.build.outcome == 'failure' }}
         run: |
           cat ./build/meson-logs/meson-log.txt
 
+      - name: Run meson tests
+        id: tests
+        run: |
+          meson test -C build
+
+      - name: Print meson test log
+        if: ${{ failure() && steps.tests.outcome == 'failure' }}
+        run: |
+          cat ./build/meson-logs/testlog.txt
+
       - name: Build with waf
+        id: build_waf
         run: |
           ./ci/build-macos.sh waf
         env:
@@ -101,18 +120,14 @@ jobs:
           TRAVIS_OS_NAME: "${{ matrix.os }}"
 
       - name: Print waf log
-        if: ${{ failure() }}
+        if: ${{ failure() && steps.build_waf.outcome == 'failure' }}
         run: |
-          cat ./build/config.log
+          cat ./build_waf/config.log
 
   linux:
-    runs-on: "ubuntu-20.04"
+    runs-on: "ubuntu-22.04"
     container:
-      image: "registry.cirno.systems/kiwi/containers/mpv-ci:stable-deps"
-      # Disable seccomp until a container manager in GitHub recognizes
-      # clone3() syscall,
-      # <https://github.com/actions/virtual-environments/issues/3812>.
-      options: --security-opt seccomp=unconfined
+      image: "registry.opensuse.org/home/mia/images/images/mpv-ci:stable-deps"
       env:
         CC: "${{ matrix.cc }}"
     strategy:
@@ -121,40 +136,50 @@ jobs:
           - "gcc"
           - "clang"
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Install dependencies
         run: |
           ./bootstrap.py
-          # TODO: switch back to zypper when OpenSuse updates Meson
-          # zypper -n install meson
-          zypper -n install python3-pip
-          pip install --no-input meson ninja
+          # workaround to avoid "fatal: unsafe repository" error
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Build with meson
+        id: build
         run: |
           ./ci/build-tumbleweed.sh meson
 
       - name: Print meson log
-        if: ${{ failure() }}
+        if: ${{ failure() && steps.build.outcome == 'failure' }}
         run: |
           cat ./build/meson-logs/meson-log.txt
 
+      - name: Run meson tests
+        id: tests
+        run: |
+          meson test -C build
+
+      - name: Print meson test log
+        if: ${{ failure() && steps.tests.outcome == 'failure' }}
+        run: |
+          cat ./build/meson-logs/testlog.txt
+
       - name: Build with waf
+        id: build_waf
         run: |
           ./ci/build-tumbleweed.sh waf
 
       - name: Print waf log
-        if: ${{ failure() }}
+        if: ${{ failure() && steps.build_waf.outcome == 'failure' }}
         run: |
-          cat ./build/config.log
+          cat ./build_waf/config.log
 
   freebsd:
-    runs-on: macos-10.15 # until https://github.com/actions/runner/issues/385
+    runs-on: macos-12 # until https://github.com/actions/runner/issues/385
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Test in FreeBSD VM
-      uses: vmactions/freebsd-vm@v0.1.5 # aka FreeBSD 13.0
+      uses: vmactions/freebsd-vm@v0
       with:
         usesh: true
         prepare: |
@@ -165,11 +190,15 @@ jobs:
                 ffmpeg \
                 libplacebo \
                 libxkbcommon \
+                libXinerama \
+                libxpresent \
                 luajit \
+                meson \
                 openal-soft \
                 pkgconf \
                 python3 \
                 sdl2 \
+                sndio \
                 vulkan-headers \
                 wayland-protocols \
                 #
@@ -184,14 +213,104 @@ jobs:
                 libcdio-paranoia \
                 libdvdnav \
                 mujs \
+                pipewire \
                 pulseaudio \
                 rubberband \
                 sekrit-twc-zimg \
                 uchardet \
                 v4l_compat \
                 #
-            # Meson from pkg is too old
-            python3 -m ensurepip
-            pip3 install --no-input meson ninja
         run: |
           ./ci/build-freebsd.sh
+          meson test -C build
+
+    - name: Print meson log
+      if: ${{ failure() }}
+      run: |
+        cat ./build/meson-logs/meson-log.txt
+
+    - name: Print meson test log
+      if: ${{ failure() }}
+      run: |
+        cat ./build/meson-logs/testlog.txt
+
+    - name: Print waf log
+      if: ${{ failure() }}
+      run: |
+        cat ./build_waf/config.log
+
+  msys2:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sys:
+          - clang32
+          - clang64
+          - mingw32
+          - mingw64
+          - ucrt64
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.sys }}
+          update: true
+          install: git
+          pacboy: >-
+            angleproject:p
+            cc:p
+            diffutils:p
+            ffmpeg:p
+            lcms2:p
+            libarchive:p
+            libass:p
+            libcdio-paranoia:p
+            libdvdnav:p
+            libjpeg-turbo:p
+            libplacebo:p
+            lua51:p
+            meson:p
+            ninja:p
+            pkgconf:p
+            python:p
+            rst2pdf:p
+            rubberband:p
+            shaderc:p
+            spirv-cross:p
+            uchardet:p
+            vapoursynth:p
+            vulkan:p
+
+      - name: Build with meson
+        id: build
+        run: |
+          ./ci/build-msys2.sh meson
+
+      - name: Print meson log
+        if: ${{ failure() && steps.build.outcome == 'failure' }}
+        run: |
+          cat ./build/meson-logs/meson-log.txt
+
+      - name: Run meson tests
+        id: tests
+        run: |
+          meson test -C build
+
+      - name: Print meson test log
+        if: ${{ failure() && steps.tests.outcome == 'failure' }}
+        run: |
+          cat ./build/meson-logs/testlog.txt
+
+      - name: Build with waf
+        id: build_waf
+        run: |
+          ./ci/build-msys2.sh waf
+
+      - name: Print waf log
+        if: ${{ failure() && steps.build_waf.outcome == 'failure' }}
+        run: |
+          cat ./build_waf/config.log

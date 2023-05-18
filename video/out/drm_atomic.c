@@ -107,14 +107,14 @@ int drm_object_set_property(drmModeAtomicReq *request, struct drm_object *object
    return -EINVAL;
 }
 
-struct drm_object * drm_object_create(struct mp_log *log, int fd,
-                                      uint32_t object_id, uint32_t type)
+struct drm_object *drm_object_create(struct mp_log *log, int fd,
+                                     uint32_t object_id, uint32_t type)
 {
     struct drm_object *obj = NULL;
     obj = talloc_zero(NULL, struct drm_object);
+    obj->fd = fd;
     obj->id = object_id;
     obj->type = type;
-    obj->fd = fd;
 
     if (drm_object_create_properties(log, fd, obj)) {
         talloc_free(obj);
@@ -195,7 +195,6 @@ struct drm_atomic_context *drm_atomic_create_context(struct mp_log *log, int fd,
             if (connector->connector_id == connector_id)
                 ctx->connector =  drm_object_create(log, ctx->fd, connector->connector_id,
                                                     DRM_MODE_OBJECT_CONNECTOR);
-
             drmModeFreeConnector(connector);
             if (ctx->connector)
                 break;
@@ -211,8 +210,7 @@ struct drm_atomic_context *drm_atomic_create_context(struct mp_log *log, int fd,
         drmplane = NULL;
 
         if (possible_crtcs & (1 << crtc_index)) {
-            plane = drm_object_create(log, ctx->fd, plane_id,
-                                      DRM_MODE_OBJECT_PLANE);
+            plane = drm_object_create(log, ctx->fd, plane_id, DRM_MODE_OBJECT_PLANE);
 
             if (!plane) {
                 mp_err(log, "Failed to create Plane object from plane ID %d\n",
@@ -274,7 +272,7 @@ struct drm_atomic_context *drm_atomic_create_context(struct mp_log *log, int fd,
             mp_verbose(log, "Using %s plane %d as drmprime plane\n", plane_type, drmprime_video_plane_id);
             ctx->drmprime_video_plane = drm_object_create(log, ctx->fd, drmprime_video_plane_id, DRM_MODE_OBJECT_PLANE);
         } else {
-            mp_verbose(log, "Failed to find drmprime plane with idx=%d. drmprime-drm hwdec interop will not work\n", drmprime_video_plane_idx);
+            mp_verbose(log, "Failed to find drmprime plane with idx=%d. drmprime-overlay hwdec interop will not work\n", drmprime_video_plane_idx);
         }
     } else {
         mp_verbose(log, "Found drmprime plane with ID %d\n", ctx->drmprime_video_plane->id);
@@ -389,6 +387,9 @@ bool drm_atomic_save_old_state(struct drm_atomic_context *ctx)
     if (0 > drm_object_get_property(ctx->crtc, "ACTIVE", &ctx->old_state.crtc.active))
         ret = false;
 
+    // This property was added in kernel 5.0. We will just ignore any errors.
+    drm_object_get_property(ctx->crtc, "VRR_ENABLED", &ctx->old_state.crtc.vrr_enabled);
+
     if (0 > drm_object_get_property(ctx->connector, "CRTC_ID", &ctx->old_state.connector.crtc_id))
         ret = false;
 
@@ -411,6 +412,9 @@ bool drm_atomic_restore_old_state(drmModeAtomicReqPtr request, struct drm_atomic
 
     if (0 > drm_object_set_property(request, ctx->connector, "CRTC_ID", ctx->old_state.connector.crtc_id))
         ret = false;
+
+    // This property was added in kernel 5.0. We will just ignore any errors.
+    drm_object_set_property(request, ctx->crtc, "VRR_ENABLED", ctx->old_state.crtc.vrr_enabled);
 
     if (!drm_mode_ensure_blob(ctx->fd, &ctx->old_state.crtc.mode))
         ret = false;

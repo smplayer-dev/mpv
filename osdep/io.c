@@ -32,6 +32,7 @@
 #include "mpv_talloc.h"
 
 #include "config.h"
+#include "misc/random.h"
 #include "osdep/io.h"
 #include "osdep/terminal.h"
 
@@ -682,7 +683,7 @@ char *mp_getenv(const char *name)
     return NULL;
 }
 
-char ***mp_penviron()
+char ***mp_penviron(void)
 {
     mp_getenv("");  // ensure init
     return &utf8_environ;  // `environ' should be an l-value
@@ -804,7 +805,7 @@ int mp_mkostemps(char *template, int suffixlen, int flags)
     for (size_t fuckshit = 0; fuckshit < UINT32_MAX; fuckshit++) {
         // Using a random value may make it require fewer iterations (even if
         // not truly random; just a counter would be sufficient).
-        size_t fuckmess = rand();
+        size_t fuckmess = mp_rand_next();
         char crap[7] = "";
         snprintf(crap, sizeof(crap), "%06zx", fuckmess);
         memcpy(t, crap, 6);

@@ -23,7 +23,6 @@
 
 #include <libavutil/avutil.h>
 
-#include "config.h"
 #include "mpv_talloc.h"
 
 #include "misc/thread_pool.h"
@@ -353,7 +352,7 @@ void update_demuxer_properties(struct MPContext *mpctx)
         }
         talloc_free(mpctx->filtered_tags);
         mpctx->filtered_tags = info;
-        mp_notify(mpctx, MPV_EVENT_METADATA_UPDATE, NULL);
+        mp_notify(mpctx, MP_EVENT_METADATA_UPDATE, NULL);
     }
     if (events & DEMUX_EVENT_DURATION)
         mp_notify(mpctx, MP_EVENT_DURATION_UPDATE, NULL);
@@ -415,6 +414,8 @@ static struct track *add_stream_track(struct MPContext *mpctx,
         .user_tid = find_new_tid(mpctx, stream->type),
         .demuxer_id = stream->demuxer_id,
         .ff_index = stream->ff_index,
+        .hls_bitrate = stream->hls_bitrate,
+        .program_id = stream->program_id,
         .title = stream->title,
         .default_track = stream->default_track,
         .forced_track = stream->forced_track,
@@ -429,7 +430,7 @@ static struct track *add_stream_track(struct MPContext *mpctx,
     };
     MP_TARRAY_APPEND(mpctx, mpctx->tracks, mpctx->num_tracks, track);
 
-    mp_notify(mpctx, MPV_EVENT_TRACKS_CHANGED, NULL);
+    mp_notify(mpctx, MP_EVENT_TRACKS_CHANGED, NULL);
 
     return track;
 }
@@ -458,6 +459,7 @@ static int match_lang(char **langs, char *lang)
  * 0b) track is not from --external-file
  * 1) track is external (no_default cancels this)
  * 1b) track was passed explicitly (is not an auto-loaded subtitle)
+ * 1c) track matches the program ID of the video
  * 2) earlier match in lang list
  * 3a) track is marked forced and we're preferring forced tracks
  * 3b) track is marked non-forced and we're preferring non-forced tracks
@@ -471,7 +473,7 @@ static int match_lang(char **langs, char *lang)
  */
 // Return whether t1 is preferred over t2
 static bool compare_track(struct track *t1, struct track *t2, char **langs,
-                          int prefer_forced, struct MPOpts *opts)
+                          int prefer_forced, struct MPOpts *opts, int preferred_program)
 {
     if (!opts->autoload_files && t1->is_external != t2->is_external)
         return !t1->is_external;
@@ -485,6 +487,11 @@ static bool compare_track(struct track *t1, struct track *t2, char **langs,
     }
     if (t1->auto_loaded != t2->auto_loaded)
         return !t1->auto_loaded;
+    if (preferred_program != -1 && t1->program_id != -1 && t2->program_id != -1) {
+        if ((t1->program_id == preferred_program) !=
+            (t2->program_id == preferred_program))
+            return t1->program_id == preferred_program;
+    }
     int l1 = match_lang(langs, t1->lang), l2 = match_lang(langs, t2->lang);
     if (l1 != l2)
         return l1 > l2;
@@ -528,6 +535,8 @@ struct track *select_default_track(struct MPContext *mpctx, int order,
                         (!opts->subs_with_matching_audio &&
                          mpctx->current_track[0][STREAM_AUDIO] &&
                          match_lang(langs, mpctx->current_track[0][STREAM_AUDIO]->lang));
+    int preferred_program = (type != STREAM_VIDEO && mpctx->current_track[0][STREAM_VIDEO]) ?
+                            mpctx->current_track[0][STREAM_VIDEO]->program_id : -1;
     if (tid == -2)
         return NULL;
     bool select_fallback = type == STREAM_VIDEO || type == STREAM_AUDIO;
@@ -544,7 +553,7 @@ struct track *select_default_track(struct MPContext *mpctx, int order,
             continue;
         if (duplicate_track(mpctx, order, type, track))
             continue;
-        if (!pick || compare_track(track, pick, langs, prefer_forced, mpctx->opts))
+        if (!pick || compare_track(track, pick, langs, prefer_forced, mpctx->opts, preferred_program))
             pick = track;
     }
     if (pick && !select_fallback && !(pick->is_external && !pick->no_default)
@@ -686,7 +695,7 @@ void mp_switch_track_n(struct MPContext *mpctx, int order, enum stream_type type
         reinit_sub(mpctx, track);
     }
 
-    mp_notify(mpctx, MPV_EVENT_TRACK_SWITCHED, NULL);
+    mp_notify(mpctx, MP_EVENT_TRACK_SWITCHED, NULL);
     mp_wakeup_core(mpctx);
 
     talloc_free(mpctx->track_layout_hash);
@@ -752,7 +761,7 @@ bool mp_remove_track(struct MPContext *mpctx, struct track *track)
     if (!in_use)
         demux_cancel_and_free(d);
 
-    mp_notify(mpctx, MPV_EVENT_TRACKS_CHANGED, NULL);
+    mp_notify(mpctx, MP_EVENT_TRACKS_CHANGED, NULL);
 
     return true;
 }
@@ -1257,7 +1266,7 @@ static int reinit_complex_filters(struct MPContext *mpctx, bool force_uninit)
     }
 
     struct mp_lavfi *l =
-        mp_lavfi_create_graph(mpctx->filter_root, 0, false, NULL, graph);
+        mp_lavfi_create_graph(mpctx->filter_root, 0, false, NULL, NULL, graph);
     if (!l)
         goto done;
     mpctx->lavfi = l->f;
@@ -1358,7 +1367,7 @@ done:
             reselect_demux_stream(mpctx, mpctx->tracks[n], false);
     }
 
-    mp_notify(mpctx, MPV_EVENT_TRACKS_CHANGED, NULL);
+    mp_notify(mpctx, MP_EVENT_TRACKS_CHANGED, NULL);
 
     return success ? 1 : -1;
 }
@@ -1692,7 +1701,7 @@ terminate_playback:
     update_core_idle_state(mpctx);
 
     if (mpctx->step_frames) {
-        opts->pause = 1;
+        opts->pause = true;
         m_config_notify_change_opt_ptr(mpctx->mconfig, &opts->pause);
     }
 
@@ -1721,7 +1730,7 @@ terminate_playback:
     talloc_free(mpctx->filtered_tags);
     mpctx->filtered_tags = NULL;
 
-    mp_notify(mpctx, MPV_EVENT_TRACKS_CHANGED, NULL);
+    mp_notify(mpctx, MP_EVENT_TRACKS_CHANGED, NULL);
 
     if (encode_lavc_didfail(mpctx->encode_lavc_ctx))
         mpctx->stop_play = PT_ERROR;

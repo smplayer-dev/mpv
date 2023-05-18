@@ -1,12 +1,15 @@
 #include <math.h>
 #include <pthread.h>
 
+#include <libavutil/hwcontext.h>
+
 #include "common/common.h"
 #include "common/global.h"
 #include "common/msg.h"
 #include "osdep/atomic.h"
 #include "osdep/timer.h"
 #include "video/hwdec.h"
+#include "video/img_format.h"
 
 #include "filter.h"
 #include "filter_internal.h"
@@ -397,7 +400,7 @@ static void init_connection(struct mp_pin *p)
     if (out->manual_connection)
         assert(out->manual_connection->in->runner == runner);
 
-    // Logicaly, the ends are always manual connections. A pin chain without
+    // Logically, the ends are always manual connections. A pin chain without
     // manual connections at the ends is still disconnected (or if this
     // attempted to extend an existing connection, becomes dangling and gets
     // disconnected).
@@ -682,15 +685,19 @@ struct mp_stream_info *mp_filter_find_stream_info(struct mp_filter *f)
     return NULL;
 }
 
-struct AVBufferRef *mp_filter_load_hwdec_device(struct mp_filter *f, int avtype)
+struct mp_hwdec_ctx *mp_filter_load_hwdec_device(struct mp_filter *f, int imgfmt)
 {
     struct mp_stream_info *info = mp_filter_find_stream_info(f);
     if (!info || !info->hwdec_devs)
         return NULL;
 
-    hwdec_devices_request_all(info->hwdec_devs);
+    struct hwdec_imgfmt_request params = {
+        .imgfmt = imgfmt,
+        .probing = false,
+    };
+    hwdec_devices_request_for_img_fmt(info->hwdec_devs, &params);
 
-    return hwdec_devices_get_lavc(info->hwdec_devs, avtype);
+    return hwdec_devices_get_by_imgfmt(info->hwdec_devs, imgfmt);
 }
 
 static void filter_wakeup(struct mp_filter *f, bool mark_only)

@@ -20,7 +20,6 @@
 #include <errno.h>
 #include <assert.h>
 
-#include "config.h"
 #include "mpv_talloc.h"
 
 #include "osdep/io.h"
@@ -167,6 +166,20 @@ void issue_refresh_seek(struct MPContext *mpctx, enum seek_precision min_prec)
         return;
     }
     queue_seek(mpctx, MPSEEK_ABSOLUTE, get_current_time(mpctx), min_prec, 0);
+}
+
+void update_content_type(struct MPContext *mpctx, struct track *track)
+{
+    enum mp_content_type content_type;
+    if (!track || !track->vo_c) {
+        content_type = MP_CONTENT_NONE;
+    } else if (track->image) {
+        content_type = MP_CONTENT_IMAGE;
+    } else {
+        content_type = MP_CONTENT_VIDEO;
+    }
+    if (mpctx->video_out)
+        vo_control(mpctx->video_out, VOCTRL_CONTENT_TYPE, &content_type);
 }
 
 void update_vo_playback_state(struct MPContext *mpctx)

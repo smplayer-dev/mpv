@@ -22,8 +22,6 @@
 #include <libavutil/mathematics.h>
 #include <libswresample/swresample.h>
 
-#include "config.h"
-
 #include "audio/aframe.h"
 #include "audio/fmt-conversion.h"
 #include "audio/format.h"
@@ -73,9 +71,9 @@ const struct m_sub_options resample_conf = {
     .opts = (const m_option_t[]) {
         {"audio-resample-filter-size", OPT_INT(filter_size), M_RANGE(0, 32)},
         {"audio-resample-phase-shift", OPT_INT(phase_shift), M_RANGE(0, 30)},
-        {"audio-resample-linear", OPT_FLAG(linear)},
+        {"audio-resample-linear", OPT_BOOL(linear)},
         {"audio-resample-cutoff", OPT_DOUBLE(cutoff), M_RANGE(0, 1)},
-        {"audio-normalize-downmix", OPT_FLAG(normalize)},
+        {"audio-normalize-downmix", OPT_BOOL(normalize)},
         {"audio-resample-max-output-size", OPT_DOUBLE(max_output_frame_size)},
         {"audio-swresample-o", OPT_KEYVALUELIST(avopts)},
         {0}
@@ -327,26 +325,6 @@ static void reset(struct mp_filter *f)
         close_lavrr(p);
 }
 
-static void extra_output_conversion(struct mp_aframe *mpa)
-{
-    int format = af_fmt_from_planar(mp_aframe_get_format(mpa));
-    int num_planes = mp_aframe_get_planes(mpa);
-    uint8_t **planes = mp_aframe_get_data_rw(mpa);
-    if (!planes)
-        return;
-    for (int p = 0; p < num_planes; p++) {
-        void *ptr = planes[p];
-        int total = mp_aframe_get_total_plane_samples(mpa);
-        if (format == AF_FORMAT_FLOAT) {
-            for (int s = 0; s < total; s++)
-                ((float *)ptr)[s] = av_clipf(((float *)ptr)[s], -1.0f, 1.0f);
-        } else if (format == AF_FORMAT_DOUBLE) {
-            for (int s = 0; s < total; s++)
-                ((double *)ptr)[s] = MPCLAMP(((double *)ptr)[s], -1.0, 1.0);
-        }
-    }
-}
-
 // This relies on the tricky way mpa was allocated.
 static bool reorder_planes(struct mp_aframe *mpa, int *reorder,
                            struct mp_chmap *newmap)
@@ -450,8 +428,6 @@ static struct mp_frame filter_resample_output(struct priv *p,
         if (got != out_samples)
             goto error;
     }
-
-    extra_output_conversion(out);
 
     if (in) {
         mp_aframe_copy_attributes(out, in);

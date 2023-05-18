@@ -41,8 +41,8 @@
 //       processing on the final rendering process in the VO.
 
 struct opts {
-    int deint_enabled;
-    int interlaced_only;
+    bool deint_enabled;
+    bool interlaced_only;
     struct mp_vdpau_mixer_opts opts;
 };
 
@@ -136,11 +136,11 @@ static struct mp_filter *vf_vdpaupp_create(struct mp_filter *parent, void *optio
 
     p->queue = mp_refqueue_alloc(f);
 
-    AVBufferRef *ref = mp_filter_load_hwdec_device(f, AV_HWDEVICE_TYPE_VDPAU);
-    if (!ref)
+    struct mp_hwdec_ctx *hwdec_ctx =
+        mp_filter_load_hwdec_device(f, IMGFMT_VDPAU);
+    if (!hwdec_ctx || !hwdec_ctx->av_device_ref)
         goto error;
-    p->ctx = mp_vdpau_get_ctx_from_av(ref);
-    av_buffer_unref(&ref);
+    p->ctx = mp_vdpau_get_ctx_from_av(hwdec_ctx->av_device_ref);
     if (!p->ctx)
         goto error;
 
@@ -174,13 +174,13 @@ static const m_option_t vf_opts_fields[] = {
         {"temporal", 3},
         {"temporal-spatial", 4}),
         OPTDEF_INT(3)},
-    {"deint", OPT_FLAG(deint_enabled)},
-    {"chroma-deint", OPT_FLAG(opts.chroma_deint), OPTDEF_INT(1)},
-    {"pullup", OPT_FLAG(opts.pullup)},
+    {"deint", OPT_BOOL(deint_enabled)},
+    {"chroma-deint", OPT_BOOL(opts.chroma_deint), OPTDEF_INT(1)},
+    {"pullup", OPT_BOOL(opts.pullup)},
     {"denoise", OPT_FLOAT(opts.denoise), M_RANGE(0, 1)},
     {"sharpen", OPT_FLOAT(opts.sharpen), M_RANGE(-1, 1)},
     {"hqscaling", OPT_INT(opts.hqscaling), M_RANGE(0, 9)},
-    {"interlaced-only", OPT_FLAG(interlaced_only)},
+    {"interlaced-only", OPT_BOOL(interlaced_only)},
     {0}
 };
 

@@ -277,7 +277,7 @@ function dispatch_key_binding(name, state, key_name) {
 var binds_tid = 0;  // flush timer id. actual id's are always true-thy
 mp.flush_key_bindings = function flush_key_bindings() {
     function prioritized_inputs(arr) {
-        return arr.sort(function(a, b) { return a.id > b.id })
+        return arr.sort(function(a, b) { return a.id - b.id })
                   .map(function(bind) { return bind.input });
     }
 
@@ -674,6 +674,8 @@ mp.get_script_directory = function() { return mp.script_path };
 mp.get_time = function() { return mp.get_time_ms() / 1000 };
 mp.utils.getcwd = function() { return mp.get_property("working-directory") };
 mp.utils.getpid = function() { return mp.get_property_number("pid") }
+mp.utils.get_user_path =
+    function(p) { return mp.command_native(["expand-path", String(p)]) };
 mp.get_mouse_pos = function() { return mp.get_property_native("mouse-pos") };
 mp.utils.write_file = mp.utils._write_file.bind(null, false);
 mp.utils.append_file = mp.utils._write_file.bind(null, true);

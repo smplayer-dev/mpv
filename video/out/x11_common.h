@@ -68,10 +68,16 @@ struct vo_x11_state {
     int current_icc_screen;
 
     int xrandr_event;
+    bool has_mesa;
+    bool has_nvidia;
 
     bool screensaver_enabled;
     bool dpms_touched;
     double screensaver_time_last;
+
+    struct mp_present *present;
+    bool use_present;
+    int present_code;
 
     XIM xim;
     XIC xic;
@@ -80,6 +86,7 @@ struct vo_x11_state {
     Colormap colormap;
 
     int wm_type;
+    bool hidden; // _NET_WM_STATE_HIDDEN
     bool window_hidden; // the window was mapped at least once
     bool pseudo_mapped; // not necessarily mapped, but known window size
     int fs;     // whether we assume the window is in fullscreen mode
@@ -111,9 +118,8 @@ struct vo_x11_state {
     bool size_changed_during_fs;
     bool pos_changed_during_fs;
 
-    /* The geometry/autofit option was changed while the window was maximized.
-     * Wait until the state changes to resize. */
-    bool pending_geometry_change;
+    /* One of the autofit/geometry options changed at runtime. */
+    bool geometry_change;
 
     XComposeStatus compose_status;
 
@@ -135,14 +141,17 @@ struct vo_x11_state {
     Atom icc_profile_property;
 };
 
-int vo_x11_init(struct vo *vo);
+bool vo_x11_init(struct vo *vo);
 void vo_x11_uninit(struct vo *vo);
 void vo_x11_check_events(struct vo *vo);
 bool vo_x11_screen_is_composited(struct vo *vo);
 bool vo_x11_create_vo_window(struct vo *vo, XVisualInfo *vis,
                              const char *classname);
 void vo_x11_config_vo_window(struct vo *vo);
+bool vo_x11_check_visible(struct vo *vo);
 int vo_x11_control(struct vo *vo, int *events, int request, void *arg);
+void vo_x11_present(struct vo *vo);
+void vo_x11_sync_swap(struct vo *vo);
 void vo_x11_wakeup(struct vo *vo);
 void vo_x11_wait_events(struct vo *vo, int64_t until_time_us);
 

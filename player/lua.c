@@ -123,22 +123,22 @@ static void mp_lua_optarg(lua_State *L, int arg)
 
 // autofree: avoid leaks if a lua-error occurs between talloc new/free.
 // If a lua c-function does a new allocation (not tied to an existing context),
-// and an uncaught lua-error occures before "free" - the allocation is leaked.
+// and an uncaught lua-error occurs before "free" - the allocation is leaked.
 
 // autofree lua C function: same as lua_CFunction but with these differences:
 // - It accepts an additional void* argument - a pre-initialized talloc context
 //   which it can use, and which is freed with its children once the function
-//   completes - regardless if a lua error occured or not. If a lua error did
+//   completes - regardless if a lua error occurred or not. If a lua error did
 //   occur then it's re-thrown after the ctx is freed.
 //   The stack/arguments/upvalues/return are the same as with lua_CFunction.
 // - It's inserted into the lua VM using af_pushc{function,closure} instead of
 //   lua_pushc{function,closure}, which takes care of wrapping it with the
-//   automatic talloc alocation + lua-error-handling + talloc release.
+//   automatic talloc allocation + lua-error-handling + talloc release.
 //   This requires using AF_ENTRY instead of FN_ENTRY at struct fn_entry.
 // - The autofree overhead per call is roughly two additional plain lua calls.
 //   Typically that's up to 20% slower than plain new+free without "auto",
 //   and at most about twice slower - compared to bare new+free lua_CFunction.
-// - The overhead of af_push* is one aditional lua-c-closure with two upvalues.
+// - The overhead of af_push* is one additional lua-c-closure with two upvalues.
 typedef int (*af_CFunction)(lua_State *L, void *ctx);
 
 static void af_pushcclosure(lua_State *L, af_CFunction fn, int n);
@@ -174,7 +174,7 @@ static void add_af_mpv_alloc(void *parent, char *ma)
 
 
 // Perform the equivalent of mpv_free_node_contents(node) when tmp is freed.
-static void steal_node_alloctions(void *tmp, mpv_node *node)
+static void steal_node_allocations(void *tmp, mpv_node *node)
 {
     talloc_steal(tmp, node_get_alloc(node));
 }
@@ -248,13 +248,16 @@ static void load_file(lua_State *L, const char *fname)
 {
     struct script_ctx *ctx = get_ctx(L);
     MP_DBG(ctx, "loading file %s\n", fname);
-    struct bstr s = stream_read_file(fname, ctx, ctx->mpctx->global, 100000000);
+    void *tmp = talloc_new(ctx);
+    // according to Lua manual chunkname should be '@' plus the filename
+    char *dispname = talloc_asprintf(tmp, "@%s", fname);
+    struct bstr s = stream_read_file(fname, tmp, ctx->mpctx->global, 100000000);
     if (!s.start)
         luaL_error(L, "Could not read file.\n");
-    if (luaL_loadbuffer(L, s.start, s.len, fname))
+    if (luaL_loadbuffer(L, s.start, s.len, dispname))
         lua_error(L);
     lua_call(L, 0, 1);
-    talloc_free(s.start);
+    talloc_free(tmp);
 }
 
 static int load_builtin(lua_State *L)
@@ -539,23 +542,6 @@ static int script_get_script_directory(lua_State *L)
     return 0;
 }
 
-static int script_suspend(lua_State *L)
-{
-    struct script_ctx *ctx = get_ctx(L);
-    MP_ERR(ctx, "mp.suspend() is deprecated and does nothing.\n");
-    return 0;
-}
-
-static int script_resume(lua_State *L)
-{
-    return 0;
-}
-
-static int script_resume_all(lua_State *L)
-{
-    return 0;
-}
-
 static void pushnode(lua_State *L, mpv_node *node);
 
 static int script_raw_wait_event(lua_State *L, void *tmp)
@@ -566,7 +552,7 @@ static int script_raw_wait_event(lua_State *L, void *tmp)
 
     struct mpv_node rn;
     mpv_event_to_node(&rn, event);
-    steal_node_alloctions(tmp, &rn);
+    steal_node_allocations(tmp, &rn);
 
     pushnode(L, &rn); // event
 
@@ -625,6 +611,14 @@ static int script_commandv(lua_State *L)
     }
     args[num] = NULL;
     return check_error(L, mpv_command(ctx->client, args));
+}
+
+static int script_del_property(lua_State *L)
+{
+    struct script_ctx *ctx = get_ctx(L);
+    const char *p = luaL_checkstring(L, 1);
+
+    return check_error(L, mpv_del_property(ctx->client, p));
 }
 
 static int script_set_property(lua_State *L)
@@ -930,7 +924,7 @@ static int script_get_property_native(lua_State *L, void *tmp)
     mpv_node node;
     int err = mpv_get_property(ctx->client, name, MPV_FORMAT_NODE, &node);
     if (err >= 0) {
-        steal_node_alloctions(tmp, &node);
+        steal_node_allocations(tmp, &node);
         pushnode(L, &node);
         return 1;
     }
@@ -981,7 +975,7 @@ static int script_command_native(lua_State *L, void *tmp)
     makenode(tmp, &node, L, 1);
     int err = mpv_command_node(ctx->client, &node, &result);
     if (err >= 0) {
-        steal_node_alloctions(tmp, &result);
+        steal_node_allocations(tmp, &result);
         pushnode(L, &result);
         return 1;
     }
@@ -1153,13 +1147,12 @@ static int script_split_path(lua_State *L)
     return 2;
 }
 
-static int script_join_path(lua_State *L)
+static int script_join_path(lua_State *L, void *tmp)
 {
     const char *p1 = luaL_checkstring(L, 1);
     const char *p2 = luaL_checkstring(L, 2);
-    char *r = mp_path_join(NULL, p1, p2);
+    char *r = mp_path_join(tmp, p1, p2);
     lua_pushstring(L, r);
-    talloc_free(r);
     return 1;
 }
 
@@ -1220,9 +1213,6 @@ struct fn_entry {
 
 static const struct fn_entry main_fns[] = {
     FN_ENTRY(log),
-    FN_ENTRY(suspend),
-    FN_ENTRY(resume),
-    FN_ENTRY(resume_all),
     AF_ENTRY(raw_wait_event),
     FN_ENTRY(request_event),
     FN_ENTRY(find_config_file),
@@ -1237,6 +1227,7 @@ static const struct fn_entry main_fns[] = {
     FN_ENTRY(get_property_bool),
     FN_ENTRY(get_property_number),
     AF_ENTRY(get_property_native),
+    FN_ENTRY(del_property),
     FN_ENTRY(set_property),
     FN_ENTRY(set_property_bool),
     FN_ENTRY(set_property_number),
@@ -1257,7 +1248,7 @@ static const struct fn_entry utils_fns[] = {
     AF_ENTRY(readdir),
     FN_ENTRY(file_info),
     FN_ENTRY(split_path),
-    FN_ENTRY(join_path),
+    AF_ENTRY(join_path),
     AF_ENTRY(parse_json),
     AF_ENTRY(format_json),
     FN_ENTRY(get_env_list),

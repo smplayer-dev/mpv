@@ -39,9 +39,12 @@ LIRC support - configure remotes as input devices instead).
 
 See the ``--input-`` options for ways to customize it.
 
-The following listings are not necessarily complete. See ``etc/input.conf`` for
-a list of default bindings. User ``input.conf`` files and Lua scripts can
-define additional key bindings.
+The following listings are not necessarily complete. See ``etc/input.conf``
+in the mpv source files for a list of default bindings. User ``input.conf``
+files and Lua scripts can define additional key bindings.
+
+See `COMMAND INTERFACE`_ and `Key names`_ sections for more details on
+configuring keybindings.
 
 See also ``--input-test`` for interactive binding details by key, and the
 `stats`_ built-in script for key bindings list (including print to terminal).
@@ -107,7 +110,8 @@ q
 
 Q
     Like ``q``, but store the current playback position. Playing the same file
-    later will resume at the old playback position if possible.
+    later will resume at the old playback position if possible. See
+    `RESUMING PLAYBACK`_.
 
 / and *
     Decrease/increase volume.
@@ -123,6 +127,9 @@ m
 
 \#
     Cycle through the available audio tracks.
+
+E
+    Cycle through the available Editions.
 
 f
     Toggle fullscreen (see also ``--fs``).
@@ -454,6 +461,10 @@ Name             Meaning
 ``~~desktop/``   the path to the desktop (win32, macOS)
 ``~~exe_dir/``   win32 only: the path to the directory containing the exe (for
                  config file purposes; ``$MPV_HOME`` overrides it)
+``~~cache/``     the path to application cache data (``~/.cache/mpv/``)
+                 On some platforms, this will be the same as ``~~home/``.
+``~~state/``     the path to application state data (``~/.local/state/mpv/``)
+                 On some platforms, this will be the same as ``~~home/``.
 ``~~old_home/``  do not use
 ================ ===============================================================
 
@@ -767,7 +778,7 @@ the following options:
 
         [something]
         profile-restore=copy-equal
-        vf-add=rotate=90
+        vf-add=rotate=PI/2  # rotate by 90 degrees
 
     Then running these commands will result in behavior as commented:
 
@@ -775,9 +786,9 @@ the following options:
 
         set vf vflip
         apply-profile something
-        vf-add=hflip
+        vf add hflip
         apply-profile something
-        # vf == vflip,rotate=90,hflip,rotate=90
+        # vf == vflip,rotate=PI/2,hflip,rotate=PI/2
         apply-profile something restore
         # vf == vflip
 
@@ -786,9 +797,10 @@ Conditional auto profiles
 
 Profiles which have the ``profile-cond`` option set are applied automatically
 if the associated condition matches (unless auto profiles are disabled). The
-option takes a string, which is interpreted as Lua condition. If evaluating the
-expression returns true, the profile is applied, if it returns false, it is
-ignored. This Lua code execution is not sandboxed.
+option takes a string, which is interpreted as Lua expression. If the
+expression evaluates as truthy, the profile is applied. If the expression
+errors or evaluates as falsy, the profile is not applied. This Lua code
+execution is not sandboxed.
 
 Any variables in condition expressions can reference properties. If an
 identifier is not already defined by Lua or mpv, it is interpreted as property.
@@ -809,13 +821,13 @@ cause errors if used in expressions. These are logged in verbose mode, and the
 expression is considered to be false.
 
 Whenever a property referenced by a profile condition changes, the condition
-is re-evaluated. If the return value of the condition changes from false or
-error to true, the profile is applied.
+is re-evaluated. If the return value of the condition changes from falsy or
+error to truthy, the profile is applied.
 
-This mechanism tries to "unapply" profiles once the condition changes from true
-to false. If you want to use this, you need to set ``profile-restore`` for the
-profile. Another possibility it to create another profile with an inverse
-condition to undo the other profile.
+This mechanism tries to "unapply" profiles once the condition changes from
+truthy to falsy or error. If you want to use this, you need to set
+``profile-restore`` for the profile. Another possibility it to create another
+profile with an inverse condition to undo the other profile.
 
 Recursive profiles can be used. But it is discouraged to reference other
 conditional profiles in a conditional profile, since this can lead to tricky
@@ -841,7 +853,7 @@ and unintuitive behavior.
         profile-desc=Mess up video when entering fullscreen
         profile-cond=fullscreen
         profile-restore=copy
-        vf-add=rotate=90
+        vf-add=rotate=PI/2  # rotate by 90 degrees
 
     This appends the ``rotate`` filter to the video filter chain when entering
     fullscreen. When leaving fullscreen, the ``vf`` option is set to the value
@@ -854,7 +866,7 @@ and unintuitive behavior.
 
         [something]
         profile-cond=fullscreen
-        vf-add=@rot:rotate=90
+        vf-add=@rot:rotate=PI/2
 
         [something-inv]
         profile-cond=not fullscreen
@@ -1088,6 +1100,33 @@ Additional options that can be tried:
 - without audio ``--framedrop=no --speed=1.01`` may help for live sources
   (results can be mixed)
 
+RESUMING PLAYBACK
+=================
+
+mpv is capable of storing the playback position of the currently playing file
+and resume from there the next time that file is played. This is done with the
+commands ``quit-watch-later`` (bound to Shift+Q by default) and
+``write-watch-later-config``, and with the ``--save-position-on-quit`` option.
+
+The difference between always quitting with a key bound to ``quit-watch-later``
+and using ``--save-position-on-quit`` is that the latter will save the playback
+position even when mpv is closed with a method other than a keybinding, for
+example if you shutdown your system without closing mpv beforehand, unless of
+course mpv is terminated abruptly and doesn't have the time to save (e.g. with
+the KILL Unix signal).
+
+mpv also stores options other than the playback position when they have been
+modified after playback began, for example the volume and the fullscreen state,
+and restores their values the next time the file is played. Which options are
+saved can be configured with the ``--watch-later-options`` option.
+
+When playing multiple playlist entries, mpv checks if one them has a resume
+config file associated, and if it finds one it restarts playback from it. For
+example, if you use ``quit-watch-later`` on the 5th episode of a show, and
+later play all the episodes, mpv will automatically resume playback from
+episode 5.
+
+More options to configure this functionality are listed in `Watch Later`_.
 
 PROTOCOLS
 =========
@@ -1321,36 +1360,16 @@ a VO using the OS GUI API is active). ``--stop-screensaver=no`` disables this.
 
 A common problem is that Linux desktop environments ignore the standard
 screensaver APIs on which mpv relies. In particular, mpv uses the Screen Saver
-extension (XSS) on X11, and the idle-inhibit on Wayland.
+extension (XSS) on X11, and the idle-inhibit protocol on Wayland.
 
-GNOME is one of the worst offenders, and ignores even the now widely supported
-idle-inhibit protocol. (This is either due to a combination of malice and
-incompetence, but since implementing this protocol would only take a few lines
-of code, it is most likely the former. You will also notice how GNOME advocates
-react offended whenever their sabotage is pointed out, which indicates either
-hypocrisy, or even worse ignorance.)
-
-Such incompatible desktop environments (i.e. which ignore standards) typically
-require using a DBus API. This is ridiculous in several ways. The immediate
-practical problem is that it would require adding a quite unwieldy dependency
-for a DBus library, somehow integrating its mainloop into mpv, and other
-generally unacceptable things.
-
-However, since mpv does not officially support GNOME, this is not much of a
-problem. If you are one of those miserable users who want to use mpv on GNOME,
-report a bug on the GNOME issue tracker:
-https://gitlab.gnome.org/groups/GNOME/-/issues
-
-Alternatively, you may be able to write a Lua script that calls the
-``xdg-screensaver`` command line program. (By the way, this a command line
-program is an utterly horrible kludge that tries to identify your DE, and then
-tries to send the correct DBus command via a DBus CLI tool.) If you find the
-idea of having to write a script just so your screensaver doesn't kick in
-ridiculous, do not use GNOME, or use GNOME video software instead of mpv (good
-luck).
+GNOME in particular still ignores the idle-inhibit protocol, and has its own
+D-Bus interfaces for display power management, which mpv does not support.
 
 Before mpv 0.33.0, the X11 backend ran ``xdg-screensaver reset`` in 10 second
-intervals when not paused. This hack was removed in 0.33.0.
+intervals when not paused in order to support screensaver inhibition in these
+environments. This functionality was removed in 0.33.0, but it is possible to
+call the ``xdg-screensaver`` command line program from a user script instead.
+
 
 .. include:: options.rst
 
@@ -1558,11 +1577,8 @@ For Windows-specifics, see `FILES ON WINDOWS`_ section.
     fallback subtitle font
 
 ``~/.config/mpv/fonts/``
-    Font files in this directory are used by mpv/libass for subtitles. Useful
-    if you do not want to install fonts to your system. Note that files in this
-    directory are loaded into memory before being used by mpv. If you have a
-    lot of fonts, consider using fonts.conf (see above) to include additional
-    fonts, which is more memory-efficient.
+    Default location for ``--sub-fonts-dir`` (see `Subtitles`_) and
+    ``--osd-fonts-dir`` (see `OSD`_).
 
 ``~/.config/mpv/scripts/``
     All files in this directory are loaded as if they were passed to the
@@ -1572,7 +1588,7 @@ For Windows-specifics, see `FILES ON WINDOWS`_ section.
 
     See `Script location`_ for details.
 
-``~/.config/mpv/watch_later/``
+``~/.local/state/mpv/watch_later/``
     Contains temporary config files needed for resuming playback of files with
     the watch later feature. See for example the ``Q`` key binding, or the
     ``quit-watch-later`` input command.

@@ -44,7 +44,6 @@
 #include "video/mp_image.h"
 
 #include "win_state.h"
-#include "config.h"
 #include "vo.h"
 
 struct formatmap_entry {
@@ -62,7 +61,7 @@ const struct formatmap_entry formats[] = {
     {SDL_PIXELFORMAT_RGBX8888, IMGFMT_RGB0, 0}, // has no alpha -> bad for OSD
     {SDL_PIXELFORMAT_BGR888, IMGFMT_0BGR, 0}, // BGR888 means XBGR8888
     {SDL_PIXELFORMAT_BGRX8888, IMGFMT_BGR0, 0}, // has no alpha -> bad for OSD
-    {SDL_PIXELFORMAT_ARGB8888, IMGFMT_ARGB, 1}, // matches SUBBITMAP_RGBA
+    {SDL_PIXELFORMAT_ARGB8888, IMGFMT_ARGB, 1}, // matches SUBBITMAP_BGRA
     {SDL_PIXELFORMAT_RGBA8888, IMGFMT_RGBA, 1},
     {SDL_PIXELFORMAT_ABGR8888, IMGFMT_ABGR, 1},
     {SDL_PIXELFORMAT_BGRA8888, IMGFMT_BGRA, 1},
@@ -71,7 +70,7 @@ const struct formatmap_entry formats[] = {
     {SDL_PIXELFORMAT_RGBX8888, IMGFMT_0BGR, 0}, // has no alpha -> bad for OSD
     {SDL_PIXELFORMAT_BGR888, IMGFMT_RGB0, 0}, // BGR888 means XBGR8888
     {SDL_PIXELFORMAT_BGRX8888, IMGFMT_0RGB, 0}, // has no alpha -> bad for OSD
-    {SDL_PIXELFORMAT_ARGB8888, IMGFMT_BGRA, 1}, // matches SUBBITMAP_RGBA
+    {SDL_PIXELFORMAT_ARGB8888, IMGFMT_BGRA, 1}, // matches SUBBITMAP_BGRA
     {SDL_PIXELFORMAT_RGBA8888, IMGFMT_ABGR, 1},
     {SDL_PIXELFORMAT_ABGR8888, IMGFMT_RGBA, 1},
     {SDL_PIXELFORMAT_BGRA8888, IMGFMT_ARGB, 1},
@@ -193,9 +192,9 @@ struct priv {
     struct m_config_cache *opts_cache;
 
     // options
-    int allow_sw;
-    int switch_mode;
-    int vsync;
+    bool allow_sw;
+    bool switch_mode;
+    bool vsync;
 };
 
 static bool lock_texture(struct vo *vo, struct mp_image *texmpi)
@@ -241,7 +240,7 @@ static bool lock_texture(struct vo *vo, struct mp_image *texmpi)
 }
 
 static bool is_good_renderer(SDL_RendererInfo *ri,
-                             const char *driver_name_wanted, int allow_sw,
+                             const char *driver_name_wanted, bool allow_sw,
                              struct formatmap_entry *osd_format)
 {
     if (driver_name_wanted && driver_name_wanted[0])
@@ -800,7 +799,7 @@ static void draw_osd(struct vo *vo)
     struct priv *vc = vo->priv;
 
     static const bool osdformats[SUBBITMAP_COUNT] = {
-        [SUBBITMAP_RGBA] = true,
+        [SUBBITMAP_BGRA] = true,
     };
 
     osd_draw(vo->osd, vc->osd_res, vc->osd_pts, 0, osdformats, draw_osd_cb, vo);
@@ -976,13 +975,12 @@ const struct vo_driver video_out_sdl = {
     .priv_size = sizeof(struct priv),
     .priv_defaults = &(const struct priv) {
         .renderer_index = -1,
-        .vsync = 1,
-        .screensaver_enabled = false,
+        .vsync = true,
     },
     .options = (const struct m_option []){
-        {"sw", OPT_FLAG(allow_sw)},
-        {"switch-mode", OPT_FLAG(switch_mode)},
-        {"vsync", OPT_FLAG(vsync)},
+        {"sw", OPT_BOOL(allow_sw)},
+        {"switch-mode", OPT_BOOL(switch_mode)},
+        {"vsync", OPT_BOOL(vsync)},
         {NULL}
     },
     .preinit = preinit,

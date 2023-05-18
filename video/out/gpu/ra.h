@@ -26,6 +26,10 @@ struct ra {
     // time.
     size_t max_shmem;
 
+    // Maximum number of threads in a compute work group. Set by the RA backend
+    // at init time.
+    size_t max_compute_group_threads;
+
     // Maximum push constant size. Set by the RA backend at init time.
     size_t max_pushc_size;
 
@@ -47,8 +51,8 @@ struct ra {
 };
 
 // For passing through windowing system specific parameters and such. The
-// names are always internal (except for legacy opengl-cb uses; the libmpv
-// render API uses mpv_render_param_type and maps them to names internally).
+// names are always internal (the libmpv render API uses mpv_render_param_type
+// and maps them to names internally).
 // For example, a name="x11" entry has a X11 display as (Display*)data.
 struct ra_native_resource {
     const char *name;
@@ -76,6 +80,7 @@ enum {
     RA_CAP_FRAGCOORD      = 1 << 10, // supports reading from gl_FragCoord
     RA_CAP_PARALLEL_COMPUTE  = 1 << 11, // supports parallel compute shaders
     RA_CAP_NUM_GROUPS     = 1 << 12, // supports gl_NumWorkGroups
+    RA_CAP_SLOW_DR        = 1 << 13, // direct rendering is assumed to be slow
 };
 
 enum ra_ctype {
@@ -403,7 +408,7 @@ struct ra_fns {
     void (*tex_destroy)(struct ra *ra, struct ra_tex *tex);
 
     // Upload data to a texture. This is an extremely common operation. When
-    // using a buffer, the contants of the buffer must exactly match the image
+    // using a buffer, the contents of the buffer must exactly match the image
     // - conversions between bit depth etc. are not supported. The buffer *may*
     // be marked as "in use" while this operation is going on, and the contents
     // must not be touched again by the API user until buf_poll returns true.
@@ -456,7 +461,7 @@ struct ra_fns {
 
     // Copy a sub-rectangle from one texture to another. The source/dest region
     // is always within the texture bounds. Areas outside the dest region are
-    // preserved. The formats of the textures must be losely compatible. The
+    // preserved. The formats of the textures must be loosely compatible. The
     // dst texture can be a swapchain framebuffer, but src can not. Only 2D
     // textures are supported.
     // The textures must have blit_src and blit_dst set, respectively.

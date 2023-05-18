@@ -206,7 +206,7 @@ static void assobjects_init(struct sd *sd)
     struct sd_ass_priv *ctx = sd->priv;
     struct mp_subtitle_opts *opts = sd->opts;
 
-    ctx->ass_library = mp_ass_init(sd->global, sd->log);
+    ctx->ass_library = mp_ass_init(sd->global, sd->opts->sub_style, sd->log);
     ass_set_extract_fonts(ctx->ass_library, opts->use_embedded_fonts);
 
     add_subtitle_fonts(sd);
@@ -261,9 +261,7 @@ static int init(struct sd *sd)
         strcmp(sd->codec->codec, "null") != 0)
     {
         ctx->is_converted = true;
-        ctx->converter = lavc_conv_create(sd->log, sd->codec->codec,
-                                          sd->codec->extradata,
-                                          sd->codec->extradata_size);
+        ctx->converter = lavc_conv_create(sd->log, sd->codec);
         if (!ctx->converter)
             return -1;
 
@@ -359,10 +357,14 @@ static void decode(struct sd *sd, struct demux_packet *packet)
             filter_and_add(sd, &pkt2);
         }
         if (ctx->duration_unknown) {
-            for (int n = 0; n < track->n_events - 1; n++) {
+            for (int n = track->n_events - 2; n >= 0; n--) {
                 if (track->events[n].Duration == UNKNOWN_DURATION * 1000) {
-                    track->events[n].Duration = track->events[n + 1].Start -
-                                                track->events[n].Start;
+                    if (track->events[n].Start != track->events[n + 1].Start) {
+                        track->events[n].Duration = track->events[n + 1].Start -
+                                                    track->events[n].Start;
+                    } else {
+                        track->events[n].Duration = track->events[n + 1].Duration;
+                    }
                 }
             }
         }
@@ -442,6 +444,10 @@ static void configure_ass(struct sd *sd, struct mp_osd_res *dim,
     ass_set_font_scale(priv, set_font_scale);
     ass_set_hinting(priv, set_hinting);
     ass_set_line_spacing(priv, set_line_spacing);
+#if LIBASS_VERSION >= 0x01600010
+    if (converted)
+        ass_track_set_feature(track, ASS_FEATURE_WRAP_UNICODE, 1);
+#endif
 }
 
 static bool has_overrides(char *s)
@@ -818,6 +824,10 @@ static int control(struct sd *sd, enum sd_ctrl cmd, void *arg)
             ctx->clear_once = true; // allow reloading on seeks
         }
         if (flags & UPDATE_SUB_HARD) {
+            // ass_track will be recreated, so clear duplicate cache
+            ctx->clear_once = true;
+            reset(sd);
+
             assobjects_destroy(sd);
             assobjects_init(sd);
         }
@@ -896,7 +906,8 @@ static void mangle_colors(struct sd *sd, struct sub_bitmaps *parts)
         };
     }
 
-    if (csp == params.color.space && levels == params.color.levels)
+    if ((csp == params.color.space && levels == params.color.levels) ||
+            params.color.space == MP_CSP_RGB) // Even VSFilter doesn't mangle on RGB video
         return;
 
     bool basic_conv = params.color.space == MP_CSP_BT_709 &&

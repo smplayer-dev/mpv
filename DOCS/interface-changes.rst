@@ -26,12 +26,79 @@ Interface changes
 
 ::
 
+ --- mpv 0.36.0 ---
+    - Target luminance value is now also applied when ICC profile is used.
+      `--icc-use-luma` has been added to use ICC profile luminance value.
+      If target luminance and ICC luminance is not used, old behavior apply,
+      defaulting to 203 nits. (Only applies for `--vo=gpu-next`)
+    - `playlist/N/title` gets set upon opening the file if it wasn't already set
+      and a title is available.
+    - add the `--vo=kitty` video output driver, as well as the options
+      `--vo-kitty-cols`, `--vo-kitty-rows`, `--vo-kitty-width`,
+      `--vo-kitty-height`, `--vo-kitty-left`, `--vo-kitty-top`,
+      `--vo-kitty-config-clear`, `--vo-kitty-alt-screen` and
+      `--vo-kitty-use-shm`
+    - add `--force-render`
+    - add `--vo-sixel-config-clear`, `--vo-sixel-alt-screen` and
+      `--vo-sixel-buffered`
+    - add `--wayland-content-type`
+    - deprecate `--vo-sixel-exit-clear` and alias it to
+      `--vo-sixel-alt-screen`
+    - deprecate `--drm-atomic`
+    - add `--demuxer-hysteresis-secs`
+    - add `--video-sync=display-tempo`
+    - the `start` option is no longer unconditionally written by
+      watch-later. It is still written by default but you may
+      need to explicitly add `start` depending on how you have
+      `--watch-later-options` configured.
+    - add `--vd-lavc-dr=auto` and make it the default
+    - add support for the fractional scale protocol in wayland
+    - in wayland, hidpi window scaling now scales the window by the compositor's
+      dpi scale factor by default (can be disabled with --no-hidpi-window-scale
+      if fractional scaling support exists).
+    - change --screenshot-tag-colorspace default value from `no` to `yes`
+    - undeprecate vf_sub
+    - add `--tone-mapping=st2094-40` and `--tone-mapping=st2094-10`
+    - change `--screenshot-jxl-effort` default from `3` to `4`.
+    - add `--tone-mapping-visualize`
+    - change type of `--brightness`, `--saturation`, `--contrast`, `--hue` and
+      `--gamma` to float.
+    - add `platform` property
+    - add `--auto-window-resize`
+    - `--save-position-on-quit` and its associated commands now store state files in
+      the XDG_STATE_HOME directory by default. This only has an effect on linux/bsd
+      systems.
+    - mpv now implictly saves cache files in XDG_CACHE_HOME by default. This only has
+      an effect if the user enables options that would lead to cache being stored and
+      only makes a difference on linux/bsd systems.
+    - `--cache-on-disk` no longer requires explictly setting the `--cache-dir` option
+    - add `--icc-cache` and `--gpu-shader-cache` options to control whether or not to
+      save cache files for these features; explictly setting `--icc-cache-dir` and
+      `--gpu-shader-cache` is no longer required
  --- mpv 0.35.0 ---
     - add the `--vo=gpu-next` video output driver, as well as the options
       `--allow-delayed-peak-detect`, `--builtin-scalers`,
       `--interpolation-preserve` `--lut`, `--lut-type`, `--image-lut`,
       `--image-lut-type` and `--target-lut` along with it.
     - add `--target-colorspace-hint`
+    - add `--tone-mapping-crosstalk`
+    - add `--tone-mapping` options `auto`, `spline` and `bt.2446a`
+    - add `--inverse-tone-mapping`
+    - add `--gamut-mapping-mode`, replacing `--gamut-clipping` and `--gamut-warning`
+    - add `--tone-mapping-mode`, replacing `--tone-mapping-desaturate` and
+      `--tone-mapping-desaturate-exponent`.
+    - add `dolbyvision` sub-parameter to `format` video filter
+    - `--sub-visibility` no longer has any effect on secondary subtitles
+    - add `film-grain` sub-parameter to `format` video filter
+    - add experimental `--vo=dmabuf-wayland` video output driver
+    - add `--x11-present` for controlling whether to use xorg's present extension
+    - add `engine` option to the `rubberband` audio filter to support the new
+      engine introduced in rubberband 3.0.0. Defaults to `finer` (new engine).
+    - add `--wayland-configure-bounds` option
+    - deprecate `--gamma-factor`
+    - deprecate `--gamma-auto`
+    - remove `--vulkan-disable-events`
+    - add `--glsl-shader-opts`
  --- mpv 0.34.0 ---
     - deprecate selecting by card number with `--drm-connector`, add
       `--drm-device` which can be used instead

@@ -23,7 +23,6 @@
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_vaapi.h>
 
-#include "config.h"
 #include "options/options.h"
 #include "filters/filter.h"
 #include "filters/filter_internal.h"
@@ -52,8 +51,8 @@ struct pipeline {
 
 struct opts {
     int deint_type;
-    int interlaced_only;
-    int reversal_bug;
+    bool interlaced_only;
+    bool reversal_bug;
 };
 
 struct priv {
@@ -172,8 +171,7 @@ static struct mp_image *alloc_out(struct mp_filter *vf)
     }
 
     AVFrame *av_frame = av_frame_alloc();
-    if (!av_frame)
-        abort();
+    MP_HANDLE_OOM(av_frame);
     if (av_hwframe_get_buffer(p->hw_pool, av_frame, 0) < 0) {
         MP_ERR(vf, "Failed to allocate frame from hw pool.\n");
         av_frame_free(&av_frame);
@@ -448,7 +446,11 @@ static struct mp_filter *vf_vavpp_create(struct mp_filter *parent, void *options
 
     p->queue = mp_refqueue_alloc(f);
 
-    p->av_device_ref = mp_filter_load_hwdec_device(f, AV_HWDEVICE_TYPE_VAAPI);
+    struct mp_hwdec_ctx *hwdec_ctx =
+        mp_filter_load_hwdec_device(f, IMGFMT_VAAPI);
+    if (!hwdec_ctx || !hwdec_ctx->av_device_ref)
+        goto error;
+    p->av_device_ref = av_buffer_ref(hwdec_ctx->av_device_ref);
     if (!p->av_device_ref)
         goto error;
 
@@ -480,8 +482,8 @@ static const m_option_t vf_opts_fields[] = {
         {"weave", 3},
         {"motion-adaptive", 4},
         {"motion-compensated", 5})},
-    {"interlaced-only", OPT_FLAG(interlaced_only)},
-    {"reversal-bug", OPT_FLAG(reversal_bug)},
+    {"interlaced-only", OPT_BOOL(interlaced_only)},
+    {"reversal-bug", OPT_BOOL(reversal_bug)},
     {0}
 };
 
@@ -492,8 +494,7 @@ const struct mp_user_filter_entry vf_vavpp = {
         .priv_size = sizeof(OPT_BASE_STRUCT),
         .priv_defaults = &(const OPT_BASE_STRUCT){
             .deint_type = -1,
-            .interlaced_only = 0,
-            .reversal_bug = 1,
+            .reversal_bug = true,
         },
         .options = vf_opts_fields,
     },

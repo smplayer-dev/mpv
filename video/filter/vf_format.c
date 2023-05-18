@@ -22,6 +22,7 @@
 #include <math.h>
 
 #include <libavutil/rational.h>
+#include <libavutil/buffer.h>
 
 #include "common/msg.h"
 #include "common/common.h"
@@ -54,8 +55,10 @@ struct vf_format_opts {
     int w, h;
     int dw, dh;
     double dar;
-    int convert;
+    bool convert;
     int force_scaler;
+    bool dovi;
+    bool film_grain;
 };
 
 static void set_params(struct vf_format_opts *p, struct mp_image_params *out,
@@ -141,14 +144,25 @@ static void vf_format_process(struct mp_filter *f)
 
     if (mp_pin_can_transfer_data(f->ppins[1], priv->conv->f->pins[1])) {
         struct mp_frame frame = mp_pin_out_read(priv->conv->f->pins[1]);
+        struct mp_image *img = frame.data;
 
-        if (!priv->opts->convert && frame.type == MP_FRAME_VIDEO) {
-            struct mp_image *img = frame.data;
+        if (frame.type != MP_FRAME_VIDEO)
+            goto write_out;
 
+        if (!priv->opts->convert) {
             set_params(priv->opts, &img->params, false);
             mp_image_params_guess_csp(&img->params);
         }
 
+        if (!priv->opts->dovi) {
+            av_buffer_unref(&img->dovi);
+            av_buffer_unref(&img->dovi_buf);
+        }
+
+        if (!priv->opts->film_grain)
+            av_buffer_unref(&img->film_grain);
+
+write_out:
         mp_pin_in_write(f->ppins[1], frame);
     }
 }
@@ -205,7 +219,9 @@ static const m_option_t vf_opts_fields[] = {
     {"dw", OPT_INT(dw)},
     {"dh", OPT_INT(dh)},
     {"dar", OPT_DOUBLE(dar)},
-    {"convert", OPT_FLAG(convert)},
+    {"convert", OPT_BOOL(convert)},
+    {"dolbyvision", OPT_BOOL(dovi)},
+    {"film-grain", OPT_BOOL(film_grain)},
     {"force-scaler", OPT_CHOICE(force_scaler,
                                 {"auto", MP_SWS_AUTO},
                                 {"sws", MP_SWS_SWS},
@@ -222,6 +238,8 @@ const struct mp_user_filter_entry vf_format = {
         .priv_size = sizeof(OPT_BASE_STRUCT),
         .priv_defaults = &(const OPT_BASE_STRUCT){
             .rotate = -1,
+            .dovi = true,
+            .film_grain = true,
         },
         .options = vf_opts_fields,
     },

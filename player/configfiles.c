@@ -26,7 +26,6 @@
 
 #include <libavutil/md5.h>
 
-#include "config.h"
 #include "mpv_talloc.h"
 
 #include "osdep/io.h"
@@ -53,7 +52,7 @@ static void load_all_cfgfiles(struct MPContext *mpctx, char *section,
 {
     char **cf = mp_find_all_config_files(NULL, mpctx->global, filename);
     for (int i = 0; cf && cf[i]; i++)
-        m_config_parse_config_file(mpctx->mconfig, cf[i], section, 0);
+        m_config_parse_config_file(mpctx->mconfig, mpctx->global, cf[i], section, 0);
     talloc_free(cf);
 }
 
@@ -64,7 +63,7 @@ void mp_parse_cfgfiles(struct MPContext *mpctx)
 {
     struct MPOpts *opts = mpctx->opts;
 
-    mp_mk_config_dir(mpctx->global, "");
+    mp_mk_user_dir(mpctx->global, "home", "");
 
     char *p1 = mp_get_user_path(NULL, mpctx->global, "~~home/");
     char *p2 = mp_get_user_path(NULL, mpctx->global, "~~old_home/");
@@ -100,7 +99,7 @@ static int try_load_config(struct MPContext *mpctx, const char *file, int flags,
     if (!mp_path_exists(file))
         return 0;
     MP_MSG(mpctx, msgl, "Loading config '%s'\n", file);
-    m_config_parse_config_file(mpctx->mconfig, file, NULL, flags);
+    m_config_parse_config_file(mpctx->mconfig, mpctx->global, file, NULL, flags);
     return 1;
 }
 
@@ -193,6 +192,17 @@ static bool copy_mtime(const char *f1, const char *f2)
     return true;
 }
 
+static char *mp_get_playback_resume_dir(struct MPContext *mpctx)
+{
+    char *wl_dir = mpctx->opts->watch_later_directory;
+    if (wl_dir && wl_dir[0]) {
+        wl_dir = mp_get_user_path(mpctx, mpctx->global, wl_dir);
+    } else {
+        wl_dir = mp_find_user_file(mpctx, mpctx->global, "state", MP_WATCH_LATER_CONF);
+    }
+    return wl_dir;
+}
+
 static char *mp_get_playback_resume_config_filename(struct MPContext *mpctx,
                                                     const char *fname)
 {
@@ -217,21 +227,9 @@ static char *mp_get_playback_resume_config_filename(struct MPContext *mpctx,
     for (int i = 0; i < 16; i++)
         conf = talloc_asprintf_append(conf, "%02X", md5[i]);
 
-    if (!mpctx->cached_watch_later_configdir) {
-        char *wl_dir = mpctx->opts->watch_later_directory;
-        if (wl_dir && wl_dir[0]) {
-            mpctx->cached_watch_later_configdir =
-                mp_get_user_path(mpctx, mpctx->global, wl_dir);
-        }
-    }
-
-    if (!mpctx->cached_watch_later_configdir) {
-        mpctx->cached_watch_later_configdir =
-            mp_find_user_config_file(mpctx, mpctx->global, MP_WATCH_LATER_CONF);
-    }
-
-    if (mpctx->cached_watch_later_configdir)
-        res = mp_path_join(NULL, mpctx->cached_watch_later_configdir, conf);
+    char *wl_dir = mp_get_playback_resume_dir(mpctx);
+    if (wl_dir && wl_dir[0])
+        res = mp_path_join(NULL, wl_dir, conf);
 
 exit:
     talloc_free(tmp);
@@ -293,7 +291,8 @@ void mp_write_watch_later_conf(struct MPContext *mpctx)
     if (!conffile)
         goto exit;
 
-    mp_mk_config_dir(mpctx->global, mpctx->cached_watch_later_configdir);
+    char *wl_dir = mp_get_playback_resume_dir(mpctx);
+    mp_mk_user_dir(mpctx->global, "state", wl_dir);
 
     MP_INFO(mpctx, "Saving state.\n");
 
@@ -303,18 +302,23 @@ void mp_write_watch_later_conf(struct MPContext *mpctx)
 
     write_filename(mpctx, file, cur->filename);
 
+    bool write_start = true;
     double pos = get_current_time(mpctx);
 
     if ((demux && (!demux->seekable || demux->partially_seekable)) ||
         pos == MP_NOPTS_VALUE)
     {
+        write_start = false;
         MP_INFO(mpctx, "Not seekable, or time unknown - not saving position.\n");
-    } else {
-        fprintf(file, "start=%f\n", pos);
     }
     char **watch_later_options = mpctx->opts->watch_later_options;
     for (int i = 0; watch_later_options && watch_later_options[i]; i++) {
         char *pname = watch_later_options[i];
+        // Always save start if we have it in the array.
+        if (write_start && strcmp(pname, "start") == 0) {
+            fprintf(file, "%s=%f\n", pname, pos);
+            continue;
+        }
         // Only store it if it's different from the initial value.
         if (m_config_watch_later_backup_opt_changed(mpctx->mconfig, pname)) {
             char *val = NULL;

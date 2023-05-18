@@ -26,8 +26,11 @@
 #include <libavutil/common.h>
 #include <libavutil/intreadwrite.h>
 
+#include "config.h"
+
 #include "mpv_talloc.h"
 #include "audio/aframe.h"
+#include "audio/chmap_avchannel.h"
 #include "audio/fmt-conversion.h"
 #include "common/av_common.h"
 #include "common/codecs.h"
@@ -43,6 +46,7 @@
 struct priv {
     AVCodecContext *avctx;
     AVFrame *avframe;
+    AVPacket *avpkt;
     struct mp_chmap force_channel_map;
     uint32_t skip_samples, trim_samples;
     bool preroll_done;
@@ -56,7 +60,7 @@ struct priv {
 #define OPT_BASE_STRUCT struct ad_lavc_params
 struct ad_lavc_params {
     float ac3drc;
-    int downmix;
+    bool downmix;
     int threads;
     char **avopts;
 };
@@ -64,7 +68,7 @@ struct ad_lavc_params {
 const struct m_sub_options ad_lavc_conf = {
     .opts = (const m_option_t[]) {
         {"ac3drc", OPT_FLOAT(ac3drc), M_RANGE(0, 6)},
-        {"downmix", OPT_FLAG(downmix)},
+        {"downmix", OPT_BOOL(downmix)},
         {"threads", OPT_INT(threads), M_RANGE(0, 16)},
         {"o", OPT_KEYVALUELIST(avopts)},
         {0}
@@ -72,7 +76,6 @@ const struct m_sub_options ad_lavc_conf = {
     .size = sizeof(struct ad_lavc_params),
     .defaults = &(const struct ad_lavc_params){
         .ac3drc = 0,
-        .downmix = 0,
         .threads = 1,
     },
 };
@@ -101,13 +104,28 @@ static bool init(struct mp_filter *da, struct mp_codec_params *codec,
     lavc_context = avcodec_alloc_context3(lavc_codec);
     ctx->avctx = lavc_context;
     ctx->avframe = av_frame_alloc();
+    ctx->avpkt = av_packet_alloc();
     lavc_context->codec_type = AVMEDIA_TYPE_AUDIO;
     lavc_context->codec_id = lavc_codec->id;
     lavc_context->pkt_timebase = ctx->codec_timebase;
 
     if (opts->downmix && mpopts->audio_output_channels.num_chmaps == 1) {
+        const struct mp_chmap *requested_layout =
+            &mpopts->audio_output_channels.chmaps[0];
+#if !HAVE_AV_CHANNEL_LAYOUT
         lavc_context->request_channel_layout =
-            mp_chmap_to_lavc(&mpopts->audio_output_channels.chmaps[0]);
+            mp_chmap_to_lavc(requested_layout);
+#else
+        AVChannelLayout av_layout = { 0 };
+        mp_chmap_to_av_layout(&av_layout, requested_layout);
+
+        // Always try to set requested output layout - currently only something
+        // supported by AC3, MLP/TrueHD, DTS and the fdk-aac wrapper.
+        av_opt_set_chlayout(lavc_context, "downmix", &av_layout,
+                            AV_OPT_SEARCH_CHILDREN);
+
+        av_channel_layout_uninit(&av_layout);
+#endif
     }
 
     // Always try to set - option only exists for AC3 at the moment
@@ -143,6 +161,7 @@ static void destroy(struct mp_filter *da)
 
     avcodec_free_context(&ctx->avctx);
     av_frame_free(&ctx->avframe);
+    mp_free_av_packet(&ctx->avpkt);
 }
 
 static void reset(struct mp_filter *da)
@@ -168,10 +187,9 @@ static int send_packet(struct mp_filter *da, struct demux_packet *mpkt)
     if (mpkt && priv->next_pts == MP_NOPTS_VALUE)
         priv->next_pts = mpkt->pts;
 
-    AVPacket pkt;
-    mp_set_av_packet(&pkt, mpkt, &priv->codec_timebase);
+    mp_set_av_packet(priv->avpkt, mpkt, &priv->codec_timebase);
 
-    int ret = avcodec_send_packet(avctx, mpkt ? &pkt : NULL);
+    int ret = avcodec_send_packet(avctx, mpkt ? priv->avpkt : NULL);
     if (ret < 0)
         MP_ERR(da, "Error decoding audio.\n");
     return ret;
@@ -242,6 +260,9 @@ static int receive_frame(struct mp_filter *da, struct mp_frame *out)
         mp_aframe_set_size(mpframe, mp_aframe_get_size(mpframe) - trim);
         priv->trim_samples -= trim;
     }
+
+    // Strip possibly bogus float values like Infinity, NaN, denormalized
+    mp_aframe_sanitize_float(mpframe);
 
     if (mp_aframe_get_size(mpframe) > 0) {
         *out = MAKE_FRAME(MP_FRAME_AUDIO, mpframe);

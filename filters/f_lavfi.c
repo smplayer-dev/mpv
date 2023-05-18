@@ -33,6 +33,8 @@
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
 
+#include "config.h"
+
 #include "common/common.h"
 #include "common/av_common.h"
 #include "common/tags.h"
@@ -40,10 +42,12 @@
 
 #include "audio/format.h"
 #include "audio/aframe.h"
+#include "audio/chmap_avchannel.h"
 #include "video/mp_image.h"
 #include "audio/fmt-conversion.h"
 #include "video/fmt-conversion.h"
 #include "video/hwdec.h"
+#include "video/out/gpu/hwdec.h"
 
 #include "f_lavfi.h"
 #include "filter.h"
@@ -95,6 +99,9 @@ struct lavfi {
     double delay;       // seconds of audio apparently buffered by filter
 
     struct mp_lavfi public;
+
+    // Identify a specific hwdec_interop to use
+    char *hwdec_interop;
 };
 
 struct lavfi_pad {
@@ -253,8 +260,7 @@ static void precreate_graph(struct lavfi *c, bool first_init)
     c->failed = false;
 
     c->graph = avfilter_graph_alloc();
-    if (!c->graph)
-        abort();
+    MP_HANDLE_OOM(c->graph);
 
     if (mp_set_avopts(c->log, c->graph, c->graph_opts) < 0)
         goto error;
@@ -470,7 +476,11 @@ static bool init_pads(struct lavfi *c)
             params->sample_rate = mp_aframe_get_rate(fmt);
             struct mp_chmap chmap = {0};
             mp_aframe_get_chmap(fmt, &chmap);
+#if !HAVE_AV_CHANNEL_LAYOUT
             params->channel_layout = mp_chmap_to_lavc(&chmap);
+#else
+            mp_chmap_to_av_layout(&params->ch_layout, &chmap);
+#endif
             pad->timebase = (AVRational){1, mp_aframe_get_rate(fmt)};
             filter_name = "abuffer";
         } else if (pad->type == MP_FRAME_VIDEO) {
@@ -541,11 +551,22 @@ static void init_graph(struct lavfi *c)
     if (init_pads(c)) {
         struct mp_stream_info *info = mp_filter_find_stream_info(c->f);
         if (info && info->hwdec_devs) {
-            struct mp_hwdec_ctx *hwdec = hwdec_devices_get_first(info->hwdec_devs);
-            for (int n = 0; n < c->graph->nb_filters; n++) {
-                AVFilterContext *filter = c->graph->filters[n];
-                if (hwdec && hwdec->av_device_ref)
-                    filter->hw_device_ctx = av_buffer_ref(hwdec->av_device_ref);
+            struct mp_hwdec_ctx *hwdec_ctx = NULL;
+            if (c->hwdec_interop) {
+                int imgfmt =
+                    ra_hwdec_driver_get_imgfmt_for_name(c->hwdec_interop);
+                hwdec_ctx = mp_filter_load_hwdec_device(c->f, imgfmt);
+            } else {
+                hwdec_ctx = hwdec_devices_get_first(info->hwdec_devs);
+            }
+            if (hwdec_ctx && hwdec_ctx->av_device_ref) {
+                MP_VERBOSE(c, "Configuring hwdec_interop=%s for filter graph: %s\n",
+                           hwdec_ctx->driver_name, c->graph_string);
+                for (int n = 0; n < c->graph->nb_filters; n++) {
+                    AVFilterContext *filter = c->graph->filters[n];
+                    filter->hw_device_ctx =
+                        av_buffer_ref(hwdec_ctx->av_device_ref);
+                }
             }
         }
 
@@ -830,8 +851,7 @@ static struct lavfi *lavfi_alloc(struct mp_filter *parent)
     c->log = f->log;
     c->public.f = f;
     c->tmp_frame = av_frame_alloc();
-    if (!c->tmp_frame)
-        abort();
+    MP_HANDLE_OOM(c->tmp_frame);
 
     return c;
 }
@@ -879,6 +899,7 @@ error:
 
 struct mp_lavfi *mp_lavfi_create_graph(struct mp_filter *parent,
                                        enum mp_frame_type type, bool bidir,
+                                       char *hwdec_interop,
                                        char **graph_opts, const char *graph)
 {
     struct lavfi *c = lavfi_alloc(parent);
@@ -889,12 +910,14 @@ struct mp_lavfi *mp_lavfi_create_graph(struct mp_filter *parent,
     c->force_bidir = bidir;
     c->graph_opts = mp_dup_str_array(c, graph_opts);
     c->graph_string = talloc_strdup(c, graph);
+    c->hwdec_interop = talloc_strdup(c, hwdec_interop);
 
     return do_init(c);
 }
 
 struct mp_lavfi *mp_lavfi_create_filter(struct mp_filter *parent,
                                         enum mp_frame_type type, bool bidir,
+                                        char *hwdec_interop,
                                         char **graph_opts,
                                         const char *filter, char **filter_opts)
 {
@@ -904,6 +927,7 @@ struct mp_lavfi *mp_lavfi_create_filter(struct mp_filter *parent,
 
     c->force_type = type;
     c->force_bidir = bidir;
+    c->hwdec_interop = talloc_strdup(c, hwdec_interop);
     c->graph_opts = mp_dup_str_array(c, graph_opts);
     c->graph_string = talloc_strdup(c, filter);
     c->direct_filter_opts = mp_dup_str_array(c, filter_opts);
@@ -922,7 +946,9 @@ struct lavfi_user_opts {
     char *filter_name;
     char **filter_opts;
 
-    int fix_pts;
+    bool fix_pts;
+
+    char *hwdec_interop;
 };
 
 static struct mp_filter *lavfi_create(struct mp_filter *parent, void *options)
@@ -930,10 +956,11 @@ static struct mp_filter *lavfi_create(struct mp_filter *parent, void *options)
     struct lavfi_user_opts *opts = options;
     struct mp_lavfi *l;
     if (opts->is_bridge) {
-        l = mp_lavfi_create_filter(parent, opts->type, true, opts->avopts,
+        l = mp_lavfi_create_filter(parent, opts->type, true,
+                                   opts->hwdec_interop, opts->avopts,
                                    opts->filter_name, opts->filter_opts);
     } else {
-        l = mp_lavfi_create_graph(parent, opts->type, true,
+        l = mp_lavfi_create_graph(parent, opts->type, true, opts->hwdec_interop,
                                   opts->avopts, opts->graph);
     }
     if (l) {
@@ -1092,8 +1119,11 @@ const struct mp_user_filter_entry af_lavfi = {
         .priv_size = sizeof(OPT_BASE_STRUCT),
         .options = (const m_option_t[]){
             {"graph", OPT_STRING(graph)},
-            {"fix-pts", OPT_FLAG(fix_pts)},
+            {"fix-pts", OPT_BOOL(fix_pts)},
             {"o", OPT_KEYVALUELIST(avopts)},
+            {"hwdec_interop",
+             OPT_STRING_VALIDATE(hwdec_interop,
+                                 ra_hwdec_validate_drivers_only_opt)},
             {0}
         },
         .priv_defaults = &(const OPT_BASE_STRUCT){
@@ -1113,6 +1143,9 @@ const struct mp_user_filter_entry af_lavfi_bridge = {
             {"name", OPT_STRING(filter_name)},
             {"opts", OPT_KEYVALUELIST(filter_opts)},
             {"o", OPT_KEYVALUELIST(avopts)},
+            {"hwdec_interop",
+             OPT_STRING_VALIDATE(hwdec_interop,
+                                 ra_hwdec_validate_drivers_only_opt)},
             {0}
         },
         .priv_defaults = &(const OPT_BASE_STRUCT){
@@ -1132,6 +1165,9 @@ const struct mp_user_filter_entry vf_lavfi = {
         .options = (const m_option_t[]){
             {"graph", OPT_STRING(graph)},
             {"o", OPT_KEYVALUELIST(avopts)},
+            {"hwdec_interop",
+             OPT_STRING_VALIDATE(hwdec_interop,
+                                 ra_hwdec_validate_drivers_only_opt)},
             {0}
         },
         .priv_defaults = &(const OPT_BASE_STRUCT){
@@ -1151,6 +1187,10 @@ const struct mp_user_filter_entry vf_lavfi_bridge = {
             {"name", OPT_STRING(filter_name)},
             {"opts", OPT_KEYVALUELIST(filter_opts)},
             {"o", OPT_KEYVALUELIST(avopts)},
+            {"hwdec_interop",
+             OPT_STRING_VALIDATE(hwdec_interop,
+                                 ra_hwdec_validate_drivers_only_opt)},
+
             {0}
         },
         .priv_defaults = &(const OPT_BASE_STRUCT){

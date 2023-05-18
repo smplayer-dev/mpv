@@ -77,7 +77,7 @@ const struct m_sub_options stream_dvb_conf = {
         {"card", OPT_INT(cfg_devno), M_RANGE(0, MAX_ADAPTERS-1)},
         {"timeout", OPT_INT(cfg_timeout), M_RANGE(1, 30)},
         {"file", OPT_STRING(cfg_file), .flags = M_OPT_FILE},
-        {"full-transponder", OPT_FLAG(cfg_full_transponder)},
+        {"full-transponder", OPT_BOOL(cfg_full_transponder)},
         {"channel-switch-offset", OPT_INT(cfg_channel_switch_offset),
             .flags = UPDATE_DVB_PROG},
         {0}
@@ -85,7 +85,6 @@ const struct m_sub_options stream_dvb_conf = {
     .size = sizeof(dvb_opts_t),
     .defaults = &(const dvb_opts_t){
         .cfg_prog = NULL,
-        .cfg_devno = 0,
         .cfg_timeout = 30,
     },
 };
@@ -276,9 +275,7 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
     const char *sat_conf = "%d:%c:%d:%d:%255[^:]:%255[^:]\n";
     const char *ter_conf =
         "%d:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]:%255[^:]\n";
-#ifdef DVB_ATSC
     const char *atsc_conf = "%d:%255[^:]:%255[^:]:%255[^:]\n";
-#endif
     const char *vdr_conf =
         "%d:%255[^:]:%255[^:]:%d:%255[^:]:%255[^:]:%255[^:]:%*255[^:]:%d:%*d:%*d:%*d\n%n";
 
@@ -458,7 +455,6 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
                            list->NUM_CHANNELS, fields, ptr->name,
                            ptr->freq, ptr->srate);
                 break;
-#ifdef DVB_ATSC
             case SYS_ATSC:
             case SYS_DVBC_ANNEX_B:
                 fields = sscanf(&line[k], atsc_conf,
@@ -467,7 +463,6 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
                            get_dvb_delsys(delsys), list->NUM_CHANNELS,
                            fields, ptr->name, ptr->freq);
                 break;
-#endif
             case SYS_DVBS:
             case SYS_DVBS2:
                 fields = sscanf(&line[k], sat_conf,
@@ -605,15 +600,13 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
                 ptr->mod = QAM_32;
             } else if (!strcmp(mod, "QAM_16")) {
                 ptr->mod = QAM_16;
-#ifdef DVB_ATSC
             } else if (!strcmp(mod, "VSB_8") || !strcmp(mod, "8VSB")) {
                 ptr->mod = VSB_8;
             } else if (!strcmp(mod, "VSB_16") || !strcmp(mod, "16VSB")) {
                 ptr->mod = VSB_16;
-#endif
             }
         }
-#ifdef DVB_ATSC
+
         /* Modulation defines real delsys for ATSC:
            Terrestrial (VSB) is SYS_ATSC, Cable (QAM) is SYS_DVBC_ANNEX_B. */
         if (delsys == SYS_ATSC || delsys == SYS_DVBC_ANNEX_B) {
@@ -627,7 +620,6 @@ static dvb_channels_list_t *dvb_get_channels(struct mp_log *log,
             mp_verbose(log, "Switched to delivery system for ATSC: %s (guessed from modulation).\n",
                        get_dvb_delsys(delsys));
         }
-#endif
 
         switch (delsys) {
         case SYS_DVBT:

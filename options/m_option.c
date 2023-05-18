@@ -270,6 +270,7 @@ static bool flag_equal(const m_option_t *opt, void *a, void *b)
     return VAL(a) == VAL(b);
 }
 
+// Only exists for libmpv interopability and should not be used anywhere.
 const m_option_type_t m_option_type_flag = {
     // need yes or no in config files
     .name  = "Flag",
@@ -770,7 +771,7 @@ static const struct m_opt_choice_alternatives *get_choice(const m_option_t *opt,
             return NULL;
         }
     }
-    abort();
+    MP_ASSERT_UNREACHABLE();
 }
 
 static int choice_get(const m_option_t *opt, void *ta_parent,
@@ -1755,7 +1756,7 @@ static int parse_keyvalue_list(struct mp_log *log, const m_option_t *opt,
     }
 
     if (param.len) {
-        mp_err(log, "Unparseable garbage at end of option value: '%.*s'\n",
+        mp_err(log, "Unparsable garbage at end of option value: '%.*s'\n",
                BSTR_P(param));
         r = M_OPT_INVALID;
     }
@@ -1947,7 +1948,7 @@ const m_option_type_t m_option_type_dummy_flag = {
 
 // Read s sub-option name, or a positional sub-opt value.
 // termset is a string containing the set of chars that terminate an option.
-// Return 0 on succes, M_OPT_ error code otherwise.
+// Return 0 on success, M_OPT_ error code otherwise.
 // optname is for error reporting.
 static int read_subparam(struct mp_log *log, bstr optname, char *termset,
                          bstr *str, bstr *out_subparam)
@@ -2273,7 +2274,7 @@ void m_geometry_apply(int *xpos, int *ypos, int *widw, int *widh,
             *widw = *widh * asp;
         }
         // Center window after resize. If valid x:y values are passed to
-        // geometry, then those values will be overriden.
+        // geometry, then those values will be overridden.
         *xpos += prew / 2 - *widw / 2;
         *ypos += preh / 2 - *widh / 2;
     }
@@ -3771,6 +3772,16 @@ static void dup_node(void *ta_parent, struct mpv_node *node)
                 for (int n = 0; n < new->num; n++)
                     new->keys[n] = talloc_strdup(new, oldlist->keys[n]);
             }
+        }
+        break;
+    }
+    case MPV_FORMAT_BYTE_ARRAY: {
+        struct mpv_byte_array *old = node->u.ba;
+        struct mpv_byte_array *new = talloc_zero(ta_parent, struct mpv_byte_array);
+        node->u.ba = new;
+        if (old->size > 0) {
+            *new = *old;
+            new->data = talloc_memdup(new, old->data, old->size);
         }
         break;
     }

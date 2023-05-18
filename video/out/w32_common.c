@@ -54,6 +54,10 @@ EXTERN_C IMAGE_DOS_HEADER __ImageBase;
 #define WM_DPICHANGED (0x02E0)
 #endif
 
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+
 #ifndef DPI_ENUMS_DECLARED
 typedef enum MONITOR_DPI_TYPE {
     MDT_EFFECTIVE_DPI = 0,
@@ -70,6 +74,8 @@ struct w32_api {
     HRESULT (WINAPI *pGetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT*);
     BOOL (WINAPI *pImmDisableIME)(DWORD);
     BOOL (WINAPI *pAdjustWindowRectExForDpi)(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi);
+    BOOLEAN (WINAPI *pShouldAppsUseDarkMode)(void);
+    DWORD (WINAPI *pSetPreferredAppMode)(DWORD mode);
 };
 
 struct vo_w32_state {
@@ -99,7 +105,7 @@ struct vo_w32_state {
 
     bool focused;
 
-    // whether the window position and size were intialized
+    // whether the window position and size were initialized
     bool window_bounds_initialized;
 
     bool current_fs;
@@ -549,7 +555,7 @@ static void update_dpi(struct vo_w32_state *w32)
         ReleaseDC(NULL, hdc);
         MP_VERBOSE(w32, "DPI detected from the old API: %d\n", dpi);
     }
- 
+
     if (dpi <= 0) {
         dpi = 96;
         MP_VERBOSE(w32, "Couldn't determine DPI, falling back to %d\n", dpi);
@@ -1000,6 +1006,36 @@ static void reinit_window_state(struct vo_w32_state *w32)
     update_window_state(w32);
 }
 
+// Follow Windows settings and update dark mode state
+// Microsoft documented how to enable dark mode for title bar:
+// https://learn.microsoft.com/windows/apps/desktop/modernize/apply-windows-themes
+// https://learn.microsoft.com/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
+// Documentation says to set the DWMWA_USE_IMMERSIVE_DARK_MODE attribute to
+// TRUE to honor dark mode for the window, FALSE to always use light mode. While
+// in fact setting it to TRUE causes dark mode to be always enabled, regardless
+// of the settings. Since it is quite unlikely that it will be fixed, just use
+// UxTheme API to check if dark mode should be applied and while at it enable it
+// fully. Ideally this function should only call the DwmSetWindowAttribute(),
+// but it just doesn't work as documented.
+static void update_dark_mode(const struct vo_w32_state *w32)
+{
+    if (w32->api.pSetPreferredAppMode)
+        w32->api.pSetPreferredAppMode(1); // allow dark mode
+
+    HIGHCONTRAST hc = {sizeof(hc)};
+    SystemParametersInfo(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0);
+    bool high_contrast = hc.dwFlags & HCF_HIGHCONTRASTON;
+
+    // if pShouldAppsUseDarkMode is not available, just assume it to be true
+    const BOOL use_dark_mode = !high_contrast && (!w32->api.pShouldAppsUseDarkMode ||
+                                                  w32->api.pShouldAppsUseDarkMode());
+
+    SetWindowTheme(w32->window, use_dark_mode ? L"DarkMode_Explorer" : L"", NULL);
+
+    DwmSetWindowAttribute(w32->window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                          &use_dark_mode, sizeof(use_dark_mode));
+}
+
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam,
                                 LPARAM lParam)
 {
@@ -1293,6 +1329,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam,
     case WM_DISPLAYCHANGE:
         force_update_display_info(w32);
         break;
+    case WM_SETTINGCHANGE:
+        update_dark_mode(w32);
+        break;
     }
 
     if (message == w32->tbtnCreatedMsg) {
@@ -1419,8 +1458,13 @@ static void gui_thread_reconfig(void *ptr)
     struct vo *vo = w32->vo;
 
     RECT r = get_working_area(w32);
-    if (!w32->current_fs && !IsMaximized(w32->window) && w32->opts->border)
+    // for normal window which is auto-positioned (centered), center the window
+    // rather than the content (by subtracting the borders from the work area)
+    if (!w32->current_fs && !IsMaximized(w32->window) && w32->opts->border &&
+        !w32->opts->geometry.xy_valid /* specific position not requested */)
+    {
         subtract_window_borders(w32, w32->window, &r);
+    }
     struct mp_rect screen = { r.left, r.top, r.right, r.bottom };
     struct vo_win_geometry geo;
 
@@ -1433,8 +1477,9 @@ static void gui_thread_reconfig(void *ptr)
     vo_calc_window_geometry3(vo, &screen, &mon, w32->dpi_scale, &geo);
     vo_apply_window_geometry(vo, &geo);
 
-    bool reset_size = w32->o_dwidth != vo->dwidth ||
-                      w32->o_dheight != vo->dheight;
+    bool reset_size = (w32->o_dwidth != vo->dwidth ||
+                       w32->o_dheight != vo->dheight) &&
+                       w32->opts->auto_window_resize;
 
     w32->o_dwidth = vo->dwidth;
     w32->o_dheight = vo->dheight;
@@ -1496,6 +1541,13 @@ static void w32_api_load(struct vo_w32_state *w32)
     HMODULE imm32_dll = LoadLibraryW(L"imm32.dll");
     w32->api.pImmDisableIME = !imm32_dll ? NULL :
                 (void *)GetProcAddress(imm32_dll, "ImmDisableIME");
+
+    // Dark mode related functions, avaliable since a Win10 update
+    HMODULE uxtheme_dll = GetModuleHandle(L"uxtheme.dll");
+    w32->api.pShouldAppsUseDarkMode = !uxtheme_dll ? NULL :
+                (void *)GetProcAddress(uxtheme_dll, MAKEINTRESOURCEA(132));
+    w32->api.pSetPreferredAppMode = !uxtheme_dll ? NULL :
+                (void *)GetProcAddress(uxtheme_dll, MAKEINTRESOURCEA(135));
 }
 
 static void *gui_thread(void *ptr)
@@ -1536,6 +1588,8 @@ static void *gui_thread(void *ptr)
         MP_ERR(w32, "unable to create window!\n");
         goto done;
     }
+
+    update_dark_mode(w32);
 
     if (SUCCEEDED(OleInitialize(NULL))) {
         ole_ok = true;
@@ -1613,8 +1667,7 @@ done:
     return NULL;
 }
 
-// Returns: 1 = Success, 0 = Failure
-int vo_w32_init(struct vo *vo)
+bool vo_w32_init(struct vo *vo)
 {
     assert(!vo->w32);
 
@@ -1646,11 +1699,11 @@ int vo_w32_init(struct vo *vo)
         talloc_free(profile);
     }
 
-    return 1;
+    return true;
 fail:
     talloc_free(w32);
     vo->w32 = NULL;
-    return 0;
+    return false;
 }
 
 struct disp_names_data {

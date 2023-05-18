@@ -32,7 +32,7 @@
 
 const bool mp_draw_sub_formats[SUBBITMAP_COUNT] = {
     [SUBBITMAP_LIBASS] = true,
-    [SUBBITMAP_RGBA] = true,
+    [SUBBITMAP_BGRA] = true,
 };
 
 struct part {
@@ -84,7 +84,7 @@ struct mp_draw_sub_cache
     struct mp_sws_context *alpha_to_calpha; // scaler for overlay -> calpha
     bool scale_in_tiles;
 
-    struct mp_sws_context *sub_scale; // scaler for SUBBITMAP_RGBA
+    struct mp_sws_context *sub_scale; // scaler for SUBBITMAP_BGRA
 
     struct mp_repack *overlay_to_f32; // convert video_overlay to float
     struct mp_image *overlay_tmp;   // slice in float32
@@ -260,8 +260,8 @@ static void mark_rect(struct mp_draw_sub_cache *p, int x0, int y0, int x1, int y
     assert(x0 >= 0 && x0 <= x1 && x1 <= p->w);
     assert(y0 >= 0 && y0 <= y1 && y1 <= p->h);
 
-    int sx0 = x0 / SLICE_W;
-    int sx1 = x1 / SLICE_W;
+    const int sx0 = x0 / SLICE_W;
+    const int sx1 = MPMIN(x1 / SLICE_W, p->s_w - 1);
 
     for (int y = y0; y < y1; y++) {
         struct slice *line = &p->slices[y * p->s_w];
@@ -270,7 +270,7 @@ static void mark_rect(struct mp_draw_sub_cache *p, int x0, int y0, int x1, int y
         struct slice *s1 = &line[sx1];
 
         s0->x0 = MPMIN(s0->x0, x0 % SLICE_W);
-        s1->x1 = MPMAX(s1->x1, x1 % SLICE_W);
+        s1->x1 = MPMAX(s1->x1, ((x1 - 1) % SLICE_W) + 1);
 
         if (s0 != s1) {
             s0->x1 = SLICE_W;
@@ -282,6 +282,11 @@ static void mark_rect(struct mp_draw_sub_cache *p, int x0, int y0, int x1, int y
                 s->x1 = SLICE_W;
             }
         }
+
+        // Ensure the very last slice does not extend
+        // beyond the total width.
+        struct slice *last_s = &line[p->s_w - 1];
+        last_s->x1 = MPMIN(p->w - ((p->s_w - 1) * SLICE_W), last_s->x1);
 
         p->any_osd = true;
     }
@@ -363,7 +368,7 @@ static void draw_rgba(uint8_t *dst, ptrdiff_t dst_stride,
 static bool render_rgba(struct mp_draw_sub_cache *p, struct part *part,
                         struct sub_bitmaps *sb)
 {
-    assert(sb->format == SUBBITMAP_RGBA);
+    assert(sb->format == SUBBITMAP_BGRA);
 
     if (part->change_id != sb->change_id) {
         for (int n = 0; n < part->num_imgs; n++)
@@ -462,7 +467,7 @@ static bool render_sb(struct mp_draw_sub_cache *p, struct sub_bitmaps *sb)
     case SUBBITMAP_LIBASS:
         render_ass(p, sb);
         return true;
-    case SUBBITMAP_RGBA:
+    case SUBBITMAP_BGRA:
         return render_rgba(p, part, sb);
     }
 
@@ -832,6 +837,14 @@ struct mp_draw_sub_cache *mp_draw_sub_alloc(void *ta_parent, struct mpv_global *
 {
     struct mp_draw_sub_cache *c = talloc_zero(ta_parent, struct mp_draw_sub_cache);
     c->global = g;
+    return c;
+}
+
+// For tests.
+struct mp_draw_sub_cache *mp_draw_sub_alloc_test(struct mp_image *dst)
+{
+    struct mp_draw_sub_cache *c = talloc_zero(NULL, struct mp_draw_sub_cache);
+    reinit_to_video(c);
     return c;
 }
 

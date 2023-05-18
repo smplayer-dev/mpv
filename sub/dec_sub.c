@@ -22,7 +22,6 @@
 #include <assert.h>
 #include <pthread.h>
 
-#include "config.h"
 #include "demux/demux.h"
 #include "sd.h"
 #include "dec_sub.h"
@@ -334,8 +333,6 @@ struct sub_bitmaps *sub_get_bitmaps(struct dec_sub *sub, struct mp_osd_res dim,
 {
     pthread_mutex_lock(&sub->lock);
 
-    struct mp_subtitle_opts *opts = sub->opts;
-
     pts = pts_to_subtitle(sub, pts);
 
     sub->last_vo_pts = pts;
@@ -344,7 +341,7 @@ struct sub_bitmaps *sub_get_bitmaps(struct dec_sub *sub, struct mp_osd_res dim,
     struct sub_bitmaps *res = NULL;
 
     if (!(sub->end != MP_NOPTS_VALUE && pts >= sub->end) &&
-        opts->sub_visibility && sub->sd->driver->get_bitmaps)
+        sub->sd->driver->get_bitmaps)
         res = sub->sd->driver->get_bitmaps(sub->sd, dim, format, pts);
 
     pthread_mutex_unlock(&sub->lock);
@@ -424,10 +421,18 @@ int sub_control(struct dec_sub *sub, enum sd_ctrl cmd, void *arg)
         if (r == CONTROL_OK)
             a[0] = pts_from_subtitle(sub, arg2[0]);
         break;
-    case SD_CTRL_UPDATE_OPTS:
+    }
+    case SD_CTRL_UPDATE_OPTS: {
+        int flags = (uintptr_t)arg;
         if (m_config_cache_update(sub->opts_cache))
             update_subtitle_speed(sub);
         propagate = true;
+        if (flags & UPDATE_SUB_HARD) {
+            // forget about the previous preload because
+            // UPDATE_SUB_HARD will cause a sub reinit
+            // that clears all preloaded sub packets
+            sub->preload_attempted = false;
+        }
         break;
     }
     default:
@@ -451,6 +456,11 @@ void sub_set_play_dir(struct dec_sub *sub, int dir)
     pthread_mutex_lock(&sub->lock);
     sub->play_dir = dir;
     pthread_mutex_unlock(&sub->lock);
+}
+
+bool sub_is_primary_visible(struct dec_sub *sub)
+{
+    return !!sub->opts->sub_visibility;
 }
 
 bool sub_is_secondary_visible(struct dec_sub *sub)

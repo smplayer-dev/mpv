@@ -25,8 +25,6 @@
 
 #include <libavutil/hwcontext.h>
 
-#include "config.h"
-
 #include "video/out/gpu/hwdec.h"
 #include "video/mp_image_pool.h"
 #include "ra_gl.h"
@@ -70,6 +68,7 @@ static int init(struct ra_hwdec *hw)
 
     p->hwctx = (struct mp_hwdec_ctx){
         .driver_name = hw->driver->name,
+        .hw_imgfmt = IMGFMT_VIDEOTOOLBOX,
     };
 
     av_hwdevice_ctx_create(&p->hwctx.av_device_ref, AV_HWDEVICE_TYPE_VIDEOTOOLBOX,

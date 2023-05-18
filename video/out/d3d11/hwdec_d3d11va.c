@@ -19,8 +19,6 @@
 #include <d3d11.h>
 #include <d3d11_1.h>
 
-#include "config.h"
-
 #include "common/common.h"
 #include "options/m_config.h"
 #include "osdep/windows_utils.h"
@@ -30,18 +28,16 @@
 #include "video/out/gpu/hwdec.h"
 
 struct d3d11va_opts {
-    int zero_copy;
+    bool zero_copy;
 };
 
 #define OPT_BASE_STRUCT struct d3d11va_opts
 const struct m_sub_options d3d11va_conf = {
     .opts = (const struct m_option[]) {
-        {"d3d11va-zero-copy", OPT_FLAG(zero_copy)},
+        {"d3d11va-zero-copy", OPT_BOOL(zero_copy)},
         {0}
     },
-    .defaults = &(const struct d3d11va_opts) {
-        .zero_copy = 0,
-    },
+    .defaults = &(const struct d3d11va_opts) {0},
     .size = sizeof(struct d3d11va_opts)
 };
 
@@ -67,6 +63,7 @@ static void uninit(struct ra_hwdec *hw)
 {
     struct priv_owner *p = hw->priv;
     hwdec_devices_remove(hw->devs, &p->hwctx);
+    av_buffer_unref(&p->hwctx.av_device_ref);
     SAFE_RELEASE(p->device);
     SAFE_RELEASE(p->device1);
 }
@@ -206,6 +203,9 @@ static int mapper_map(struct ra_hwdec_mapper *mapper)
                 .bottom = mapper->dst_params.h,
                 .back = 1,
             }), D3D11_COPY_DISCARD);
+
+        // We no longer need the original texture after copying it.
+        mp_image_unrefp(&mapper->src);
     } else {
         D3D11_TEXTURE2D_DESC desc2d;
         ID3D11Texture2D_GetDesc(tex, &desc2d);

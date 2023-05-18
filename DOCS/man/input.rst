@@ -186,7 +186,7 @@ character at the value.
 
 Custom quotes also take the content literally, but are more flexible than single
 quotes. They start with ````` (back-quote) followed by any ASCII character,
-and end at the first occurance of the same pair in reverse order, e.g.
+and end at the first occurrence of the same pair in reverse order, e.g.
 ```-foo-``` or ````bar````. The final pair sequence is not allowed at the
 value - in these examples ``-``` and `````` respectively. In the second
 example the last character of the value also can't be a back-quote.
@@ -334,6 +334,9 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
 ``set <name> <value>``
     Set the given property or option to the given value.
 
+``del <name>``
+    Delete the given property. Most properties cannot be deleted.
+
 ``add <name> [<value>]``
     Add the given value to the property or option. On overflow or underflow,
     clamp the property to the maximum. If ``<value>`` is omitted, assume ``1``.
@@ -383,6 +386,9 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
     ``async`` flag to make encoding/writing the image file asynchronous. For
     normal standalone commands, this is always asynchronous, and the flag has
     no effect. (This behavior changed with mpv 0.29.0.)
+    
+    On success, returns a ``mpv_node`` with a ``filename`` field set to the
+    saved screenshot location.
 
 ``screenshot-to-file <filename> <flags>``
     Take a screenshot and save it to a given file. The format of the file will
@@ -431,7 +437,7 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
         Playback is stopped. If idle mode (``--idle``) is enabled, the player
         will enter idle mode, otherwise it will exit.
 
-    This comm and is similar to ``loadfile`` in that it only manipulates the
+    This command is similar to ``loadfile`` in that it only manipulates the
     state of what to play next, without waiting until the current file is
     unloaded, and the next one is loaded.
 
@@ -551,9 +557,9 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
 
     ``playback_only`` (``MPV_FORMAT_FLAG``)
         Boolean indicating whether the process should be killed when playback
-        terminates (optional, default: true). If enabled, stopping playback
-        will automatically kill the process, and you can't start it outside of
-        playback.
+        of the current playlist entry terminates (optional, default: true). If
+        enabled, stopping playback will automatically kill the process, and you
+        can't start it outside of playback.
 
     ``capture_size`` (``MPV_FORMAT_INT64``)
         Integer setting the maximum number of stdout plus stderr bytes that can
@@ -581,7 +587,7 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
         instead. (Unlike the underlying OS mechanisms, the mpv command cannot
         start a process with empty environment. Fortunately, that is completely
         useless.) The format of the list is as in the ``execle()`` syscall. Each
-        string item defines an environment variable as in ``NANME=VALUE``.
+        string item defines an environment variable as in ``NAME=VALUE``.
 
         On Lua, you may use ``utils.get_env_list()`` to retrieve the current
         environment if you e.g. simply want to add a new variable.
@@ -600,12 +606,14 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
     The command returns the following result (as ``MPV_FORMAT_NODE_MAP``):
 
     ``status`` (``MPV_FORMAT_INT64``)
-        The raw exit status of the process. It will be negative on error. The
-        meaning of negative values is undefined, other than meaning error (and
-        does not correspond to OS low level exit status values).
+        Typically this is the process exit code (0 or positive) if the process
+        terminates normally, or negative for other errors (failed to start,
+        terminated by mpv, and others).  The meaning of negative values is
+        undefined, other than meaning error (and does not correspond to OS low
+        level exit status values).
 
-        On Windows, it can happen that a negative return value is returned
-        even if the process exits gracefully, because the win32 ``UINT`` exit
+        On Windows, it can happen that a negative return value is returned even
+        if the process terminates normally, because the win32 ``UINT`` exit
         code is assigned to an ``int`` variable before being set as ``int64_t``
         field in the result map. This might be fixed later.
 
@@ -616,9 +624,9 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
         Same as ``stdout``, but for stderr.
 
     ``error_string`` (``MPV_FORMAT_STRING``)
-        Empty string if the process exited gracefully. The string ``killed`` if
-        the process was terminated in an unusual way. The string ``init`` if the
-        process could not be started.
+        Empty string if the process terminated normally. The string ``killed``
+        if the process was terminated in an unusual way. The string ``init`` if
+        the process could not be started.
 
         On Windows, ``killed`` is only returned when the process has been
         killed by mpv as a result of ``playback_only`` being set to true.
@@ -633,17 +641,19 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
     it was somehow killed or returned an error status has to be queried from
     the result value.
 
-    This command can be asynchronously aborted via API.
+    This command can be asynchronously aborted via API. Also see `Asynchronous
+    command details`_. Only the ``run`` command can start processes in a truly
+    detached way.
 
-    In all cases, the subprocess will be terminated on player exit. Also see
-    `Asynchronous command details`_. Only the ``run`` command can start
-    processes in a truly detached way.
+    .. note:: The subprocess will always be terminated on player exit if it
+              wasn't started in detached mode, even if ``playback_only`` is
+              false.
 
     .. admonition:: Warning
 
-        Don't forget to set the ``playback_only`` field if you want the command
-        run while the player is in idle mode, or if you don't want that end of
-        playback kills the command.
+        Don't forget to set the ``playback_only`` field to false if you want
+        the command to run while the player is in idle mode, or if you don't
+        want the end of playback to kill the command.
 
     .. admonition:: Example
 
@@ -668,7 +678,7 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
 ``quit-watch-later [<code>]``
     Exit player, and store current playback position. Playing that file later
     will seek to the previous position on start. The (optional) argument is
-    exactly as in the ``quit`` command.
+    exactly as in the ``quit`` command. See `RESUMING PLAYBACK`_.
 
 ``sub-add <url> [<flags> [<title> [<lang>]]]``
     Load the given subtitle file or stream. By default, it is selected as
@@ -1087,7 +1097,7 @@ Input Commands that are Possibly Subject to Change
         Before mpv 0.18.1, you had to do manual "double buffering" when updating
         an overlay by replacing it with a different memory buffer. Since mpv
         0.18.1, the memory is simply copied and doesn't reference any of the
-        memory indicated by the command's arguments after the commend returns.
+        memory indicated by the command's arguments after the command returns.
         If you want to use this command before mpv 0.18.1, reads the old docs
         to see how to handle this correctly.
 
@@ -1379,7 +1389,7 @@ Input Commands that are Possibly Subject to Change
 
         This was mostly created for network streams. For local files, there may
         be much better methods to create excerpts and such. There are tons of
-        much more user-friendly Lua scripts, that will reencode parts of a file
+        much more user-friendly Lua scripts, that will re-encode parts of a file
         by spawning a separate instance of ``ffmpeg``. With network streams,
         this is not that easily possible, as the stream would have to be
         downloaded again. Even if ``--stream-record`` is used to record the
@@ -1419,8 +1429,8 @@ IPC sees. Note that the C API has separate C-level declarations with
 ``mpv_event``, which may be slightly different.
 
 Note that events are asynchronous: the player core continues running while
-events are delivered to scripts and other clients. In some cases, you can hooks
-to enforce synchronous execution.
+events are delivered to scripts and other clients. In some cases, you can use
+hooks to enforce synchronous execution.
 
 All events can have the following fields:
 
@@ -1600,10 +1610,8 @@ This list uses the event name field value, and the C API symbol in brackets:
     ``data``
         The new value of the property.
 
-The following events also happen, but are deprecated: ``tracks-changed``,
-``track-switched``, ``pause``, ``unpause``, ``metadata-update``, ``idle``,
-``tick``, ``chapter-change``. Use ``mpv_observe_property()``
-(Lua: ``mp.observe_property()``) instead.
+The following events also happen, but are deprecated: ``idle``, ``tick``
+Use ``mpv_observe_property()`` (Lua: ``mp.observe_property()``) instead.
 
 Hooks
 ~~~~~
@@ -1817,7 +1825,7 @@ Property list
 
 .. note::
 
-    Most options can be set as runtime via properties as well. Just remove the
+    Most options can be set at runtime via properties as well. Just remove the
     leading ``--`` from the option name. These are not documented below, see
     `OPTIONS`_ instead. Only properties which do not exist as option with the
     same name, or which have very different behavior from the options are
@@ -2557,7 +2565,7 @@ Property list
     is unavailable if no video is active.
 
     When setting this property in the fullscreen or maximized state, the behavior
-    is the same as window-scale. In all ther cases, setting the value of this
+    is the same as window-scale. In all other cases, setting the value of this
     property will always resize the window. This does not affect the value of
     ``window-scale``.
 
@@ -2650,6 +2658,10 @@ Property list
     Any of these properties may be unavailable or set to dummy values if the
     VO window is not created or visible.
 
+``window-id``
+    Read-only - mpv's window id. May not always be available, i.e due to window
+    not being opened yet or not being supported by the VO.
+
 ``mouse-pos``
     Read-only - last known mouse position, normalizd to OSD dimensions.
 
@@ -2669,8 +2681,6 @@ Property list
     stripped. If the subtitle is not text-based (i.e. DVD/BD subtitles), an
     empty string is returned.
 
-    This property is experimental and might be removed in the future.
-
 ``sub-text-ass``
     Like ``sub-text``, but return the text in ASS format. Text subtitles in
     other formats are converted. For native ASS subtitles, events that do
@@ -2681,8 +2691,6 @@ Property list
     This property is not enough to render ASS subtitles correctly, because ASS
     header and per-event metadata are not returned. You likely need to do
     further filtering on the returned string to make it useful.
-
-    This property is experimental and might be removed in the future.
 
 ``secondary-sub-text``
     Same as ``sub-text``, but for the secondary subtitles.
@@ -2784,9 +2792,10 @@ Property list
         entry, ``no``/false or unavailable otherwise.
 
     ``playlist/N/title``
-        Name of the Nth entry. Only available if the playlist file contains
-        such fields, and only if mpv's parser supports it for the given
-        playlist format.
+        Name of the Nth entry. Available if the playlist file contains
+        such fields and mpv's parser supports it for the given
+        playlist format, or if the playlist entry has been opened before and a
+        media-title other then then filename has been acquired.
 
     ``playlist/N/id``
         Unique ID for this entry. This is an automatically assigned integer ID
@@ -2979,7 +2988,7 @@ Property list
     If tracks of the requested type are selected via ``--lavfi-complex``, the
     first one is returned.
 
-``chapter-list``
+``chapter-list`` (RW)
     List of chapters, current entry marked. Currently, the raw property value
     is useless.
 
@@ -3070,7 +3079,8 @@ Property list
     processed for C escape sequences before passing it to the OSD code. See
     `Flat command syntax`_ for details.
 
-    A list of tags can be found here: http://docs.aegisub.org/latest/ASS_Tags/
+    A list of tags can be found here:
+    https://aeg-dev.github.io/AegiSite/docs/3.2/ass_tags/
 
 ``vo-configured``
     Whether the VO is configured right now. Usually this corresponds to whether
@@ -3246,6 +3256,24 @@ Property list
     (There is no way to ensure synchronization if two scripts try to update the
     same key at the same time.)
 
+``user-data`` (RW)
+    This is a recursive key/value map of arbitrary nodes shared between clients for
+    general use (i.e. scripts, IPC clients, host applications, etc).
+    The player itself does not use any data in it (although some builtin scripts may).
+    The property is not preserved across player restarts.
+
+    This is a more powerful replacement for ``shared-script-properties``.
+
+    Sub-paths can be accessed directly; e.g. ``user-data/my-script/state/a`` can be
+    read, written, or observed.
+
+    The top-level object itself cannot be written directly; write to sub-paths instead.
+
+    Converting this property or its sub-properties to strings will give a JSON
+    representation. If converting a leaf-level object (i.e. not a map or array)
+    and not using raw mode, the underlying content will be given (e.g. strings will be
+    printed directly, rather than quoted and JSON-escaped).
+
 ``working-directory``
     The working directory of the mpv process. Can be useful for JSON IPC users,
     because the command line player usually works with relative paths.
@@ -3301,8 +3329,9 @@ Property list
     might contain either a release version, or just a git hash.
 
 ``mpv-configuration``
-    The configuration arguments which were passed to the build system
-    (typically the way ``./waf configure ...`` was invoked).
+    The configuration arguments that were passed to the build system. If the
+    meson version used to compile mpv is older than 1.1.0, then a hardcoded
+    string of a few, arbitrary options is displayed instead.
 
 ``ffmpeg-version``
     The contents of the ``av_version_info()`` API call. This is a string which
@@ -3315,6 +3344,12 @@ Property list
     The value of ``ass_library_version()``. This is an integer, encoded in a
     somewhat weird form (apparently "hex BCD"), indicating the release version
     of the libass library linked to mpv.
+
+``platform``
+    Returns a string describing what target platform mpv was built for. The value
+    of this is dependent on what the underlying build system detects. Some of the
+    most common values are: ``windows``, ``darwin`` (macos or ios), ``linux``,
+    ``android``, and ``freebsd``. Note that this is not a complete listing.
 
 ``options/<name>`` (RW)
     The value of option ``--<name>``. Most options can be changed at runtime by
@@ -3386,6 +3421,10 @@ Property list
     the value currently always being a string. Note that the options array is
     not a map, as order matters and duplicate entries are possible. Recursive
     profiles are not expanded, and show up as special ``profile`` options.
+
+    The ``profile-restore`` field is currently missing if it holds the default
+    value (either because it was not set, or set explicitly to ``default``),
+    but in the future it might hold the value ``default``.
 
 ``command-list``
     The list of input commands. This returns an array of maps, where each map

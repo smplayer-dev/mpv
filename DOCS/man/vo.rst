@@ -21,6 +21,46 @@ in the list.
 
 Available video output drivers are:
 
+``gpu``
+    General purpose, customizable, GPU-accelerated video output driver. It
+    supports extended scaling methods, dithering, color management, custom
+    shaders, HDR, and more.
+
+    See `GPU renderer options`_ for options specific to this VO.
+
+    By default, it tries to use fast and fail-safe settings. Use the
+    ``gpu-hq`` profile to use this driver with defaults set to high quality
+    rendering. The profile can be applied with ``--profile=gpu-hq`` and its
+    contents can be viewed with ``--show-profile=gpu-hq``.
+
+    This VO abstracts over several possible graphics APIs and windowing
+    contexts, which can be influenced using the ``--gpu-api`` and
+    ``--gpu-context`` options.
+
+    Hardware decoding over OpenGL-interop is supported to some degree. Note
+    that in this mode, some corner case might not be gracefully handled, and
+    color space conversion and chroma upsampling is generally in the hand of
+    the hardware decoder APIs.
+
+    ``gpu`` makes use of FBOs by default. Sometimes you can achieve better
+    quality or performance by changing the ``--fbo-format`` option to
+    ``rgb16f``, ``rgb32f`` or ``rgb``. Known problems include Mesa/Intel not
+    accepting ``rgb16``, Mesa sometimes not being compiled with float texture
+    support, and some macOS setups being very slow with ``rgb16`` but fast
+    with ``rgb32f``. If you have problems, you can also try enabling the
+    ``--gpu-dumb-mode=yes`` option.
+
+``gpu-next``
+    Experimental video renderer based on ``libplacebo``. This supports almost
+    the same set of features as ``--vo=gpu``. See `GPU renderer options`_ for a
+    list.
+
+    Should generally be faster and higher quality, but some features may still
+    be missing or misbehave. Expect (and report!) bugs. See here for a list of
+    known differences and bugs:
+
+    https://github.com/mpv-player/mpv/wiki/GPU-Next-vs-GPU
+
 ``xv`` (X11 only)
     Uses the XVideo extension to enable hardware-accelerated display. This is
     the most compatible VO on X, but may be low-quality, and has issues with
@@ -78,7 +118,9 @@ Available video output drivers are:
 
 ``vdpau`` (X11 only)
     Uses the VDPAU interface to display and optionally also decode video.
-    Hardware decoding is used with ``--hwdec=vdpau``.
+    Hardware decoding is used with ``--hwdec=vdpau``. Note that there is
+    absolutely no reason to use this, other than compatibility. We strongly
+    recommend that you use ``--vo=gpu`` with ``--hwdec=nvdec`` instead.
 
     .. note::
 
@@ -228,47 +270,6 @@ Available video output drivers are:
     ``--vo-direct3d-exact-backbuffer``
         Always resize the backbuffer to window size.
 
-``gpu``
-    General purpose, customizable, GPU-accelerated video output driver. It
-    supports extended scaling methods, dithering, color management, custom
-    shaders, HDR, and more.
-
-    See `GPU renderer options`_ for options specific to this VO.
-
-    By default, it tries to use fast and fail-safe settings. Use the
-    ``gpu-hq`` profile to use this driver with defaults set to high quality
-    rendering. The profile can be applied with ``--profile=gpu-hq`` and its
-    contents can be viewed with ``--show-profile=gpu-hq``.
-
-    This VO abstracts over several possible graphics APIs and windowing
-    contexts, which can be influenced using the ``--gpu-api`` and
-    ``--gpu-context`` options.
-
-    Hardware decoding over OpenGL-interop is supported to some degree. Note
-    that in this mode, some corner case might not be gracefully handled, and
-    color space conversion and chroma upsampling is generally in the hand of
-    the hardware decoder APIs.
-
-    ``gpu`` makes use of FBOs by default. Sometimes you can achieve better
-    quality or performance by changing the ``--fbo-format`` option to
-    ``rgb16f``, ``rgb32f`` or ``rgb``. Known problems include Mesa/Intel not
-    accepting ``rgb16``, Mesa sometimes not being compiled with float texture
-    support, and some macOS setups being very slow with ``rgb16`` but fast
-    with ``rgb32f``. If you have problems, you can also try enabling the
-    ``--gpu-dumb-mode=yes`` option.
-
-``gpu-next``
-    Experimental video renderer based on ``libplacebo``. This supports almost
-    the same set of features as ``--vo=gpu``. See `GPU renderer options`_ for a
-    list.
-
-    Currently, this only supports Vulkan, OpenGL and no hardware
-    decoding. Unlike ``--vo=gpu``, the FBO formats are not tunable, but you can
-    still set ``--gpu-dumb-mode=yes`` to forcibly disable their use.
-
-    Should generally be faster and higher quality, but some features may still
-    be missing or misbehave. Expect (and report!) bugs.
-
 ``sdl``
     SDL 2.0+ Render video output driver, depending on system with or without
     hardware acceleration. Should work on all platforms supported by SDL 2.0.
@@ -285,13 +286,20 @@ Available video output drivers are:
     ``--sdl-switch-mode``
         Instruct SDL to switch the monitor video mode when going fullscreen.
 
+``dmabuf-wayland``
+    Experimental Wayland output driver designed for use with either drm stateless
+    or VA API hardware decoding. The driver is designed to avoid any GPU to CPU copies,
+    and to perform scaling and color space conversion using fixed-function hardware,
+    if available, rather than GPU shaders. This frees up GPU resources for other tasks.
+    Currently this driver is experimental and only works with the ``--hwdec=vaapi``
+    or ``hwdec=drm`` drivers;
+    OSD is also not supported. Supported compositors : Weston and Sway.
+
 ``vaapi``
     Intel VA API video output driver with support for hardware decoding. Note
     that there is absolutely no reason to use this, other than compatibility.
-    This is low quality, and has issues with OSD.
-
-    .. note:: This driver is for compatibility with crappy systems. You can
-              use vaapi hardware decoding with ``--vo=gpu`` too.
+    This is low quality, and has issues with OSD. We strongly recommend that
+    you use ``--vo=gpu`` with ``--hwdec=vaapi`` instead.
 
     The following global options are supported by this video output:
 
@@ -375,13 +383,54 @@ Available video output drivers are:
     ``--vo-tct-256=<yes|no>`` (default: no)
         Use 256 colors - for terminals which don't support true color.
 
+``kitty``
+    Graphical output for the terminal, using the kitty graphics protocol.
+    Tested with kitty and Konsole.
+
+    You may need to use ``--profile=sw-fast`` to get decent performance.
+
+    Kitty size and alignment options:
+
+    ``--vo-kitty-cols=<columns>``, ``--vo-kitty-rows=<rows>`` (default: 0)
+        Specify the terminal size in character cells, otherwise (0) read it
+        from the terminal, or fall back to 80x25.
+
+    ``--vo-kitty-width=<width>``, ``--vo-kitty-height=<height>`` (default: 0)
+        Specify the available size in pixels, otherwise (0) read it from the
+        terminal, or fall back to 320x240.
+
+    ``--vo-kitty-left=<col>``, ``--vo-kitty-top=<row>`` (default: 0)
+        Specify the position in character cells where the image starts (1 is
+        the first column or row). If 0 (default) then try to automatically
+        determine it according to the other values and the image aspect ratio
+        and zoom.
+
+    ``--vo-kitty-config-clear=<yes|no>`` (default: yes)
+        Whether or not to clear the terminal whenever the output is
+        reconfigured (e.g. when video size changes).
+
+    ``--vo-kitty-alt-screen=<yes|no>`` (default: yes)
+        Whether or not to use the alternate screen buffer and return the
+        terminal to its previous state on exit. When set to no, the last
+        kitty image stays on screen after quit, with the cursor following it.
+
+    ``--vo-kitty-use-shm=<yes|no>`` (default: no)
+        Use shared memory objects to transfer image data to the terminal.
+        This is much faster than sending the data as escape codes, but is not
+        supported by as many terminals. It also only works on the local machine
+        and not via e.g. SSH connections.
+
+        This option is not implemented on Windows.
+
 ``sixel``
     Graphical output for the terminal, using sixels. Tested with ``mlterm`` and
     ``xterm``.
 
-    Note: the Sixel image output is not synchronized with other terminal output
-    from mpv, which can lead to broken images. The option ``--really-quiet``
-    can help with that, and is recommended.
+    Note: the Sixel image output is not synchronized with other terminal
+    output from mpv, which can lead to broken images.
+    The option ``--really-quiet`` can help with that, and is recommended.
+    On some platforms, using the ``--vo-sixel-buffered`` option may work as
+    well.
 
     You may need to use ``--profile=sw-fast`` to get decent performance.
 
@@ -425,9 +474,24 @@ Available video output drivers are:
         to take into account padding at the report - this only works correctly
         when the overall padding per axis is smaller than the number of cells.
 
-    ``--vo-sixel-exit-clear=<yes|no>`` (default: yes)
-        Whether or not to clear the terminal on quit. When set to no - the last
+    ``--vo-sixel-config-clear=<yes|no>`` (default: yes)
+        Whether or not to clear the terminal whenever the output is
+        reconfigured (e.g. when video size changes).
+
+    ``--vo-sixel-alt-screen=<yes|no>`` (default: yes)
+        Whether or not to use the alternate screen buffer and return the
+        terminal to its previous state on exit. When set to no, the last
         sixel image stays on screen after quit, with the cursor following it.
+
+        ``--vo-sixel-exit-clear`` is a deprecated alias for this option and
+        may be removed in the future.
+
+    ``--vo-sixel-buffered=<yes|no>`` (default: no)
+        Buffers the full output sequence before writing it to the terminal.
+        On POSIX platforms, this can help prevent interruption (including from
+        other applications) and thus broken images, but may come at a
+        performance cost with some terminals and is subject to implementation
+        details.
 
     Sixel image quality options:
 
@@ -589,16 +653,6 @@ Available video output drivers are:
         Use ``--drm-mode=help`` to get a list of available modes for all active
         connectors.
 
-    ``--drm-atomic=<no|auto>``
-        Toggle use of atomic modesetting. Mostly useful for debugging.
-
-        :no:    Use legacy modesetting.
-        :auto:  Use atomic modesetting, falling back to legacy modesetting if
-                not available. (default)
-
-        Note: Only affects ``gpu-context=drm``. ``vo=drm`` supports legacy
-        modesetting only.
-
     ``--drm-draw-plane=<primary|overlay|N>``
         Select the DRM plane to which video and OSD is drawn to, under normal
         circumstances. The plane can be specified as ``primary``, which will
@@ -607,11 +661,11 @@ Available video output drivers are:
         based, and related to the CRTC.
         (default: primary)
 
-        When using this option with the drmprime-drm hwdec interop, only the OSD
-        is rendered to this plane.
+        When using this option with the drmprime-overlay hwdec interop, only the
+        OSD is rendered to this plane.
 
     ``--drm-drmprime-video-plane=<primary|overlay|N>``
-        Select the DRM plane to use for video with the drmprime-drm hwdec
+        Select the DRM plane to use for video with the drmprime-overlay hwdec
         interop (used by e.g. the rkmpp hwdec on RockChip SoCs, and v4l2 hwdec:s
         on various other SoC:s). The plane is unused otherwise. This option
         accepts the same values as ``--drm-draw-plane``. (default: overlay)
@@ -637,16 +691,27 @@ Available video output drivers are:
     ``--drm-draw-surface-size=<[WxH]>``
         Sets the size of the surface used on the draw plane. The surface will
         then be upscaled to the current screen resolution. This option can be
-        useful when used together with the drmprime-drm hwdec interop at high
-        resolutions, as it allows scaling the draw plane (which in this case
-        only handles the OSD) down to a size the GPU can handle.
+        useful when used together with the drmprime-overlay hwdec interop at
+        high resolutions, as it allows scaling the draw plane (which in this
+        case only handles the OSD) down to a size the GPU can handle.
 
-        When used without the drmprime-drm hwdec interop this option will just
-        cause the video to get rendered at a different resolution and then
+        When used without the drmprime-overlay hwdec interop this option will
+        just cause the video to get rendered at a different resolution and then
         scaled to screen size.
 
-        Note: this option is only available with DRM atomic support.
         (default: display resolution)
+
+    ``--drm-vrr-enabled=<no|yes|auto>``
+        Toggle use of Variable Refresh Rate (VRR), aka Freesync or Adaptive Sync
+        on compatible systems. VRR allows for the display to be refreshed at any
+        rate within a range (usually ~40Hz-60Hz for 60Hz displays). This can help
+        with playback of 24/25/50fps content. Support depends on the use of a
+        compatible monitor, GPU, and a sufficiently new kernel with drivers
+        that support the feature.
+
+        :no:    Do not attempt to enable VRR. (default)
+        :yes:   Attempt to enable VRR, whether the capability is reported or not.
+        :auto:  Attempt to enable VRR if support is reported.
 
 ``mediacodec_embed`` (Android)
     Renders ``IMGFMT_MEDIACODEC`` frames directly to an ``android.view.Surface``.
@@ -657,8 +722,8 @@ Available video output drivers are:
     many of mpv's features (subtitle rendering, OSD/OSC, video filters, etc)
     are not available with this driver.
 
-    To use hardware decoding with ``--vo=gpu`` instead, use
-    ``--hwdec=mediacodec-copy`` along with ``--gpu-context=android``.
+    To use hardware decoding with ``--vo=gpu`` instead, use ``--hwdec=mediacodec``
+    or ``mediacodec-copy`` along with ``--gpu-context=android``.
 
 ``wlshm`` (Wayland only)
     Shared memory video output driver without hardware acceleration that works

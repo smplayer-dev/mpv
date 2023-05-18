@@ -27,10 +27,10 @@
 #include <stdint.h>
 
 /* New symbols must still be added to libmpv/mpv.def. */
-#if defined(__GNUC__) || defined(__clang__)
-#define MPV_EXPORT __attribute__((visibility("default")))
-#elif defined(_MSC_VER)
+#ifdef _WIN32
 #define MPV_EXPORT __declspec(dllexport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define MPV_EXPORT __attribute__((visibility("default")))
 #else
 #define MPV_EXPORT
 #endif
@@ -152,8 +152,6 @@ extern "C" {
  * - Using UNIX IPC (off by default) will override the SIGPIPE signal handler,
  *   and set it to SIG_IGN. Some invocations of the "subprocess" command will
  *   also do that.
- * - mpv will reseed the legacy C random number generator by calling srand() at
- *   some random point once.
  * - mpv may start sub processes, so overriding SIGCHLD, or waiting on all PIDs
  *   (such as calling wait()) by the parent process or any other library within
  *   the process must be avoided. libmpv itself only waits for its own PIDs.
@@ -184,7 +182,7 @@ extern "C" {
  * Embedding the video window
  * --------------------------
  *
- * Using the render API (in render_cb.h) is recommended. This API requires
+ * Using the render API (in render.h) is recommended. This API requires
  * you to create and maintain an OpenGL context, to which you can render
  * video using a specific API call. This API does not include keyboard or mouse
  * input directly.
@@ -224,10 +222,8 @@ extern "C" {
  * This are the planned changes that will most likely be done on the next major
  * bump of the library:
  *
- *  - remove all symbols and include files that are marked as deprecated
+ *  - remove all symbols that are marked as deprecated
  *  - reassign enum numerical values to remove gaps
- *  - remove the mpv_opengl_init_params.extra_exts field
- *  - change the type of mpv_event_end_file.reason
  *  - disabling all events by default
  */
 
@@ -244,7 +240,7 @@ extern "C" {
  * relational operators (<, >, <=, >=).
  */
 #define MPV_MAKE_VERSION(major, minor) (((major) << 16) | (minor) | 0UL)
-#define MPV_CLIENT_API_VERSION MPV_MAKE_VERSION(1, 109)
+#define MPV_CLIENT_API_VERSION MPV_MAKE_VERSION(2, 1)
 
 /**
  * The API user is allowed to "#define MPV_ENABLE_DEPRECATED 0" before
@@ -510,26 +506,6 @@ MPV_EXPORT int mpv_initialize(mpv_handle *ctx);
  */
 MPV_EXPORT void mpv_destroy(mpv_handle *ctx);
 
-#if MPV_ENABLE_DEPRECATED
-/**
- * @deprecated use mpv_destroy(), which has exactly the same semantics (the
- * deprecation is a mere rename)
- *
- * Since mpv client API version 1.29:
- *  If the last mpv_handle is detached, the core player is destroyed. In
- *  addition, if there are only weak mpv_handles (such as created by
- *  mpv_create_weak_client() or internal scripts), these mpv_handles will
- *  be sent MPV_EVENT_SHUTDOWN. This function may block until these clients
- *  have responded to the shutdown event, and the core is finally destroyed.
- *
- * Before mpv client API version 1.29:
- *  This left the player running. If you want to be sure that the
- *  player is terminated, send a "quit" command, and wait until the
- *  MPV_EVENT_SHUTDOWN event is received, or use mpv_terminate_destroy().
- */
-MPV_EXPORT void mpv_detach_destroy(mpv_handle *ctx);
-#endif
-
 /**
  * Similar to mpv_destroy(), but brings the player and all clients down
  * as well, and waits until all of them are destroyed. This function blocks. The
@@ -616,43 +592,6 @@ MPV_EXPORT mpv_handle *mpv_create_weak_client(mpv_handle *ctx, const char *name)
  * @return error code
  */
 MPV_EXPORT int mpv_load_config_file(mpv_handle *ctx, const char *filename);
-
-#if MPV_ENABLE_DEPRECATED
-
-/**
- * This does nothing since mpv 0.23.0 (API version 1.24). Below is the
- * description of the old behavior.
- *
- * Stop the playback thread. This means the core will stop doing anything, and
- * only run and answer to client API requests. This is sometimes useful; for
- * example, no new frame will be queued to the video output, so doing requests
- * which have to wait on the video output can run instantly.
- *
- * Suspension is reentrant and recursive for convenience. Any thread can call
- * the suspend function multiple times, and the playback thread will remain
- * suspended until the last thread resumes it. Note that during suspension, all
- * clients still have concurrent access to the core, which is serialized through
- * a single mutex.
- *
- * Call mpv_resume() to resume the playback thread. You must call mpv_resume()
- * for each mpv_suspend() call. Calling mpv_resume() more often than
- * mpv_suspend() is not allowed.
- *
- * Calling this on an uninitialized player (see mpv_create()) will deadlock.
- *
- * @deprecated This function, as well as mpv_resume(), are deprecated, and
- *             will stop doing anything soon. Their semantics were never
- *             well-defined, and their usefulness is extremely limited. The
- *             calls will remain stubs in order to keep ABI compatibility.
- */
-MPV_EXPORT void mpv_suspend(mpv_handle *ctx);
-
-/**
- * See mpv_suspend().
- */
-MPV_EXPORT void mpv_resume(mpv_handle *ctx);
-
-#endif
 
 /**
  * Return the internal time in microseconds. This has an arbitrary start offset,
@@ -917,27 +856,10 @@ MPV_EXPORT void mpv_free_node_contents(mpv_node *node);
  *       Starting with mpv version 0.21.0 (version 1.23) most options can be set
  *       with mpv_set_property() (and related functions), and even before
  *       mpv_initialize(). In some obscure corner cases, using this function
- *       to set options might still be required (see below, and also section
- *       "Inconsistencies between options and properties" on the manpage). Once
+ *       to set options might still be required (see
+ *       "Inconsistencies between options and properties" in the manpage). Once
  *       these are resolved, the option setting functions might be fully
  *       deprecated.
- *
- *       The following options still need to be set either _before_
- *       mpv_initialize() with mpv_set_property() (or related functions), or
- *       with mpv_set_option() (or related functions) at any time:
- *              - options shadowed by deprecated properties:
- *                - demuxer (property deprecated in 0.21.0)
- *                - idle (property deprecated in 0.21.0)
- *                - fps (property deprecated in 0.21.0)
- *                - cache (property deprecated in 0.21.0)
- *                - length (property deprecated in 0.10.0)
- *                - audio-samplerate (property deprecated in 0.10.0)
- *                - audio-channels (property deprecated in 0.10.0)
- *                - audio-format (property deprecated in 0.10.0)
- *              - deprecated options shadowed by properties:
- *                - chapter (option deprecated in 0.21.0)
- *                - playlist-pos (option deprecated in 0.21.0)
- *       The deprecated properties were removed in mpv 0.23.0.
  *
  * @param name Option name. This is the same as on the mpv command line, but
  *             without the leading "--".
@@ -1147,6 +1069,16 @@ MPV_EXPORT int mpv_set_property(mpv_handle *ctx, const char *name, mpv_format fo
 MPV_EXPORT int mpv_set_property_string(mpv_handle *ctx, const char *name, const char *data);
 
 /**
+ * Convenience function to delete a property.
+ *
+ * This is equivalent to running the command "del [name]".
+ *
+ * @param name The property name. See input.rst for a list of properties.
+ * @return error code
+ */
+MPV_EXPORT int mpv_del_property(mpv_handle *ctx, const char *name);
+
+/**
  * Set a property asynchronously. You will receive the result of the operation
  * as MPV_EVENT_SET_PROPERTY_REPLY event. The mpv_event.error field will contain
  * the result status of the operation. Otherwise, this function is similar to
@@ -1342,24 +1274,6 @@ typedef enum mpv_event_id {
     MPV_EVENT_FILE_LOADED       = 8,
 #if MPV_ENABLE_DEPRECATED
     /**
-     * The list of video/audio/subtitle tracks was changed. (E.g. a new track
-     * was found. This doesn't necessarily indicate a track switch; for this,
-     * MPV_EVENT_TRACK_SWITCHED is used.)
-     *
-     * @deprecated This is equivalent to using mpv_observe_property() on the
-     *             "track-list" property. The event is redundant, and might
-     *             be removed in the far future.
-     */
-    MPV_EVENT_TRACKS_CHANGED    = 9,
-    /**
-     * A video/audio/subtitle track was switched on or off.
-     *
-     * @deprecated This is equivalent to using mpv_observe_property() on the
-     *             "vid", "aid", and "sid" properties. The event is redundant,
-     *             and might be removed in the far future.
-     */
-    MPV_EVENT_TRACK_SWITCHED    = 10,
-    /**
      * Idle mode was entered. In this mode, no file is played, and the playback
      * core waits for new commands. (The command line player normally quits
      * instead of entering idle mode, unless --idle was specified. If mpv
@@ -1373,35 +1287,6 @@ typedef enum mpv_event_id {
      */
     MPV_EVENT_IDLE              = 11,
     /**
-     * Playback was paused. This indicates the user pause state.
-     *
-     * The user pause state is the state the user requested (changed with the
-     * "pause" property). There is an internal pause state too, which is entered
-     * if e.g. the network is too slow (the "core-idle" property generally
-     * indicates whether the core is playing or waiting).
-     *
-     * This event is sent whenever any pause states change, not only the user
-     * state. You might get multiple events in a row while these states change
-     * independently. But the event ID sent always indicates the user pause
-     * state.
-     *
-     * If you don't want to deal with this, use mpv_observe_property() on the
-     * "pause" property and ignore MPV_EVENT_PAUSE/UNPAUSE. Likewise, the
-     * "core-idle" property tells you whether video is actually playing or not.
-     *
-     * @deprecated The event is redundant with mpv_observe_property() as
-     *             mentioned above, and might be removed in the far future.
-     */
-    MPV_EVENT_PAUSE             = 12,
-    /**
-     * Playback was unpaused. See MPV_EVENT_PAUSE for not so obvious details.
-     *
-     * @deprecated The event is redundant with mpv_observe_property() as
-     *             explained in the MPV_EVENT_PAUSE comments, and might be
-     *             removed in the far future.
-     */
-    MPV_EVENT_UNPAUSE           = 13,
-    /**
      * Sent every time after a video frame is displayed. Note that currently,
      * this will be sent in lower frequency if there is no video, or playback
      * is paused - but that will be removed in the future, and it will be
@@ -1411,15 +1296,6 @@ typedef enum mpv_event_id {
      *             (such as "playback-time").
      */
     MPV_EVENT_TICK              = 14,
-    /**
-     * @deprecated This was used internally with the internal "script_dispatch"
-     *             command to dispatch keyboard and mouse input for the OSC.
-     *             It was never useful in general and has been completely
-     *             replaced with "script-binding".
-     *             This event never happens anymore, and is included in this
-     *             header only for compatibility.
-     */
-    MPV_EVENT_SCRIPT_INPUT_DISPATCH = 15,
 #endif
     /**
      * Triggered by the script-message input command. The command uses the
@@ -1445,18 +1321,6 @@ typedef enum mpv_event_id {
      * because there is no such thing as audio output embedding.
      */
     MPV_EVENT_AUDIO_RECONFIG    = 18,
-#if MPV_ENABLE_DEPRECATED
-    /**
-     * Happens when metadata (like file tags) is possibly updated. (It's left
-     * unspecified whether this happens on file start or only when it changes
-     * within a file.)
-     *
-     * @deprecated This is equivalent to using mpv_observe_property() on the
-     *             "metadata" property. The event is redundant, and might
-     *             be removed in the far future.
-     */
-    MPV_EVENT_METADATA_UPDATE   = 19,
-#endif
     /**
      * Happens when a seek was initiated. Playback stops. Usually it will
      * resume with MPV_EVENT_PLAYBACK_RESTART as soon as the seek is finished.
@@ -1474,16 +1338,6 @@ typedef enum mpv_event_id {
      * See also mpv_event and mpv_event_property.
      */
     MPV_EVENT_PROPERTY_CHANGE   = 22,
-#if MPV_ENABLE_DEPRECATED
-    /**
-     * Happens when the current chapter changes.
-     *
-     * @deprecated This is equivalent to using mpv_observe_property() on the
-     *             "chapter" property. The event is redundant, and might
-     *             be removed in the far future.
-     */
-    MPV_EVENT_CHAPTER_CHANGE    = 23,
-#endif
     /**
      * Happens if the internal per-mpv_handle ringbuffer overflows, and at
      * least 1 event had to be dropped. This can happen if the client doesn't
@@ -1636,12 +1490,11 @@ typedef struct mpv_event_start_file {
 
 typedef struct mpv_event_end_file {
     /**
-     * Corresponds to the values in enum mpv_end_file_reason (the "int" type
-     * will be replaced with mpv_end_file_reason on the next ABI bump).
+     * Corresponds to the values in enum mpv_end_file_reason.
      *
      * Unknown values should be treated as unknown.
      */
-    int reason;
+    mpv_end_file_reason reason;
     /**
      * If reason==MPV_END_FILE_REASON_ERROR, this contains a mpv error code
      * (one of MPV_ERROR_...) giving an approximate reason why playback
@@ -1678,15 +1531,6 @@ typedef struct mpv_event_end_file {
      */
     int playlist_insert_num_entries;
 } mpv_event_end_file;
-
-#if MPV_ENABLE_DEPRECATED
-/** @deprecated see MPV_EVENT_SCRIPT_INPUT_DISPATCH for remarks
- */
-typedef struct mpv_event_script_input_dispatch {
-    int arg0;
-    const char *type;
-} mpv_event_script_input_dispatch;
-#endif
 
 typedef struct mpv_event_client_message {
     /**
@@ -2042,30 +1886,6 @@ MPV_EXPORT int mpv_hook_continue(mpv_handle *ctx, uint64_t id);
  *         On MS Windows/MinGW, this will always return -1.
  */
 MPV_EXPORT int mpv_get_wakeup_pipe(mpv_handle *ctx);
-
-/**
- * @deprecated use render.h
- */
-typedef enum mpv_sub_api {
-    /**
-     * For using mpv's OpenGL renderer on an external OpenGL context.
-     * mpv_get_sub_api(MPV_SUB_API_OPENGL_CB) returns mpv_opengl_cb_context*.
-     * This context can be used with mpv_opengl_cb_* functions.
-     * Will return NULL if unavailable (if OpenGL support was not compiled in).
-     * See opengl_cb.h for details.
-     *
-     * @deprecated use render.h
-     */
-    MPV_SUB_API_OPENGL_CB = 1
-} mpv_sub_api;
-
-/**
- * This is used for additional APIs that are not strictly part of the core API.
- * See the individual mpv_sub_api member values.
- *
- * @deprecated use render.h
- */
-MPV_EXPORT void *mpv_get_sub_api(mpv_handle *ctx, mpv_sub_api sub_api);
 
 #endif
 

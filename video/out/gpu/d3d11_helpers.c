@@ -480,6 +480,7 @@ bool mp_d3d11_create_present_device(struct mp_log *log,
                                     struct d3d11_device_opts *opts,
                                     ID3D11Device **dev_out)
 {
+    bool debug = opts->debug;
     bool warp = opts->force_warp;
     int max_fl = opts->max_feature_level;
     int min_fl = opts->min_feature_level;
@@ -510,7 +511,15 @@ bool mp_d3d11_create_present_device(struct mp_log *log,
         max_fl = max_fl ? max_fl : D3D_FEATURE_LEVEL_11_0;
         min_fl = min_fl ? min_fl : D3D_FEATURE_LEVEL_9_1;
 
-        hr = create_device(log, adapter, warp, opts->debug, max_fl, min_fl, &dev);
+        hr = create_device(log, adapter, warp, debug, max_fl, min_fl, &dev);
+
+        // Retry without debug, if SDK is not available
+        if (debug && hr == DXGI_ERROR_SDK_COMPONENT_MISSING) {
+            mp_warn(log, "gpu-debug disabled due to error: %s\n", mp_HRESULT_to_str(hr));
+            debug = false;
+            continue;
+        }
+
         if (SUCCEEDED(hr))
             break;
 
@@ -630,7 +639,21 @@ static HRESULT create_swapchain_1_2(ID3D11Device *dev, IDXGIFactory2 *factory,
     };
 
     if (flip) {
-        desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+        // UNORDERED_ACCESS with FLIP_SEQUENTIAL seems to be buggy with
+        // Windows 7 drivers
+        if ((desc.BufferUsage & DXGI_USAGE_UNORDERED_ACCESS) &&
+            !IsWindows8OrGreater())
+        {
+            mp_verbose(log, "Disabling UNORDERED_ACCESS for flip-model "
+                            "swapchain backbuffers in Windows 7\n");
+            desc.BufferUsage &= ~DXGI_USAGE_UNORDERED_ACCESS;
+        }
+
+        if (IsWindows10OrGreater()) {
+            desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        } else {
+            desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+        }
         desc.BufferCount = opts->length;
     } else {
         desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
@@ -921,7 +944,9 @@ bool mp_d3d11_create_swapchain(ID3D11Device *dev, struct mp_log *log,
 
     DXGI_SWAP_CHAIN_DESC scd = {0};
     IDXGISwapChain_GetDesc(swapchain, &scd);
-    if (scd.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL) {
+    if (scd.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL ||
+        scd.SwapEffect == DXGI_SWAP_EFFECT_FLIP_DISCARD)
+    {
         mp_verbose(log, "Using flip-model presentation\n");
     } else {
         mp_verbose(log, "Using bitblt-model presentation\n");

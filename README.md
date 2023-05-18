@@ -76,20 +76,23 @@ Compiling with full features requires development files for several
 external libraries. One of the two build systems supported by mpv is required:
 [meson](https://mesonbuild.com/index.html) or [waf](https://waf.io/). Meson
 can be obtained from your distro or PyPI. Waf can be downloaded by using the
-`./bootstrap.py` script. It will get the lastest version of waf that was tested
+`./bootstrap.py` script. It will get the latest version of waf that was tested
 with mpv. Some documentation about the differences between the build systems are
 located in [build-system-differences][build-system-differences].
 
+**Note**: Building with waf is considered *deprecated* and will be removed in the
+future.
+
 ### Meson
 
-After creating your build directory (e.g. `meson build`), you can view a list
+After creating your build directory (e.g. `meson setup build`), you can view a list
 of all the build options via `meson configure build`. You could also just simply
 look at the `meson_options.txt` file. Logs are stored in `meson-logs` within
 your build directory.
 
 Example:
 
-    meson build
+    meson setup build
     meson compile -C build
     meson install -C build
 

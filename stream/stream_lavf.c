@@ -37,12 +37,12 @@
 #define OPT_BASE_STRUCT struct stream_lavf_params
 struct stream_lavf_params {
     char **avopts;
-    int cookies_enabled;
+    bool cookies_enabled;
     char *cookies_file;
     char *useragent;
     char *referrer;
     char **http_header_fields;
-    int tls_verify;
+    bool tls_verify;
     char *tls_ca_file;
     char *tls_cert_file;
     char *tls_key_file;
@@ -56,9 +56,9 @@ const struct m_sub_options stream_lavf_conf = {
         {"http-header-fields", OPT_STRINGLIST(http_header_fields)},
         {"user-agent", OPT_STRING(useragent)},
         {"referrer", OPT_STRING(referrer)},
-        {"cookies", OPT_FLAG(cookies_enabled)},
+        {"cookies", OPT_BOOL(cookies_enabled)},
         {"cookies-file", OPT_STRING(cookies_file), .flags = M_OPT_FILE},
-        {"tls-verify", OPT_FLAG(tls_verify)},
+        {"tls-verify", OPT_BOOL(tls_verify)},
         {"tls-ca-file", OPT_STRING(tls_ca_file), .flags = M_OPT_FILE},
         {"tls-cert-file", OPT_STRING(tls_cert_file), .flags = M_OPT_FILE},
         {"tls-key-file", OPT_STRING(tls_key_file), .flags = M_OPT_FILE},
@@ -192,7 +192,7 @@ void mp_setup_av_network_options(AVDictionary **dict, const char *target_fmt,
         char *file = opts->cookies_file;
         if (file && file[0])
             file = mp_get_user_path(temp, global, file);
-        char *cookies = cookies_lavf(temp, log, file);
+        char *cookies = cookies_lavf(temp, global, log, file);
         if (cookies && cookies[0])
             av_dict_set(dict, "cookies", cookies, 0);
     }
@@ -285,11 +285,18 @@ static int open_f(stream_t *stream)
     }
 
     // Replace "mms://" with "mmsh://", so that most mms:// URLs just work.
+    // Replace "webdav://" with "http://" and "webdavs://" with "https://"
     bstr b_filename = bstr0(filename);
     if (bstr_eatstart0(&b_filename, "mms://") ||
         bstr_eatstart0(&b_filename, "mmshttp://"))
     {
         filename = talloc_asprintf(temp, "mmsh://%.*s", BSTR_P(b_filename));
+    } else if (bstr_eatstart0(&b_filename, "webdav://"))
+    {
+        filename = talloc_asprintf(temp, "http://%.*s", BSTR_P(b_filename));
+    } else if (bstr_eatstart0(&b_filename, "webdavs://"))
+    {
+        filename = talloc_asprintf(temp, "https://%.*s", BSTR_P(b_filename));
     }
 
     av_dict_set(&dict, "reconnect", "1", 0);
@@ -411,7 +418,8 @@ const stream_info_t stream_info_ffmpeg = {
   .protocols = (const char *const[]){
      "rtmp", "rtsp", "rtsps", "http", "https", "mms", "mmst", "mmsh", "mmshttp",
      "rtp", "httpproxy", "rtmpe", "rtmps", "rtmpt", "rtmpte", "rtmpts", "srt",
-     "srtp", "gopher", "gophers", "data",
+     "rist", "srtp", "gopher", "gophers", "data", "ipfs", "ipns", "webdav",
+     "webdavs",
      NULL },
   .can_write = true,
   .stream_origin = STREAM_ORIGIN_NET,

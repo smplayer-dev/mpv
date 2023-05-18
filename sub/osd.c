@@ -61,12 +61,14 @@ static const m_option_t style_opts[] = {
     {"align-y", OPT_CHOICE(align_y,
         {"top", -1}, {"center", 0}, {"bottom", +1})},
     {"blur", OPT_FLOAT(blur), M_RANGE(0, 20)},
-    {"bold", OPT_FLAG(bold)},
-    {"italic", OPT_FLAG(italic)},
+    {"bold", OPT_BOOL(bold)},
+    {"italic", OPT_BOOL(italic)},
     {"justify", OPT_CHOICE(justify,
         {"auto", 0}, {"left", 1}, {"center", 2}, {"right", 3})},
     {"font-provider", OPT_CHOICE(font_provider,
         {"auto", 0}, {"none", 1}, {"fontconfig", 2}), .flags = UPDATE_SUB_HARD},
+    {"fonts-dir", OPT_STRING(fonts_dir),
+        .flags = M_OPT_FILE | UPDATE_SUB_HARD},
     {0}
 };
 
@@ -124,7 +126,7 @@ struct osd_state *osd_create(struct mpv_global *global)
         .opts_cache = m_config_cache_alloc(osd, global, &mp_osd_render_sub_opts),
         .global = global,
         .log = mp_log_new(osd, global->log, "osd"),
-        .force_video_pts = MP_NOPTS_VALUE,
+        .force_video_pts = ATOMIC_VAR_INIT(MP_NOPTS_VALUE),
         .stats = stats_ctx_create(osd, global, "osd"),
     };
     pthread_mutex_init(&osd->lock, NULL);
@@ -210,17 +212,12 @@ void osd_set_render_subs_in_filter(struct osd_state *osd, bool s)
 
 void osd_set_force_video_pts(struct osd_state *osd, double video_pts)
 {
-    pthread_mutex_lock(&osd->lock);
-    osd->force_video_pts = video_pts;
-    pthread_mutex_unlock(&osd->lock);
+    atomic_store(&osd->force_video_pts, video_pts);
 }
 
 double osd_get_force_video_pts(struct osd_state *osd)
 {
-    pthread_mutex_lock(&osd->lock);
-    double pts = osd->force_video_pts;
-    pthread_mutex_unlock(&osd->lock);
-    return pts;
+    return atomic_load(&osd->force_video_pts);
 }
 
 void osd_set_progbar(struct osd_state *osd, struct osd_progbar_state *s)
@@ -284,14 +281,14 @@ static struct sub_bitmaps *render_object(struct osd_state *osd,
 {
     int format = SUBBITMAP_LIBASS;
     if (!sub_formats[format] || osd->opts->force_rgba_osd)
-        format = SUBBITMAP_RGBA;
+        format = SUBBITMAP_BGRA;
 
     struct sub_bitmaps *res = NULL;
 
     check_obj_resize(osd, osdres, obj);
 
     if (obj->type == OSDTYPE_SUB) {
-        if (obj->sub)
+        if (obj->sub && sub_is_primary_visible(obj->sub))
             res = sub_get_bitmaps(obj->sub, obj->vo_res, format, video_pts);
     } else if (obj->type == OSDTYPE_SUB2) {
         if (obj->sub && sub_is_secondary_visible(obj->sub))
@@ -335,8 +332,9 @@ struct sub_bitmap_list *osd_render(struct osd_state *osd, struct mp_osd_res res,
     list->w = res.w;
     list->h = res.h;
 
-    if (osd->force_video_pts != MP_NOPTS_VALUE)
-        video_pts = osd->force_video_pts;
+    double force_video_pts = atomic_load(&osd->force_video_pts);
+    if (force_video_pts != MP_NOPTS_VALUE)
+        video_pts = force_video_pts;
 
     if (draw_flags & OSD_DRAW_SUB_FILTER)
         draw_flags |= OSD_DRAW_SUB_ONLY;

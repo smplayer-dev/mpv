@@ -63,7 +63,7 @@ bool mp_pin_out_has_data(struct mp_pin *p);
 // frame is available, but to get proper data flow in filters, you should
 // probably follow the preferred conventions.)
 // If no frame is returned, a frame is automatically requested via
-// mp_pin_out_request_data() (so it might be retuned in the future).
+// mp_pin_out_request_data() (so it might be returned in the future).
 // If a frame is returned, no new frame is automatically requested (this is
 // usually not wanted, because it could lead to additional buffering).
 // This is guaranteed to return a non-NONE frame if mp_pin_out_has_data()
@@ -408,8 +408,7 @@ struct mp_stream_info {
 // Search for a parent filter (including f) that has this set, and return it.
 struct mp_stream_info *mp_filter_find_stream_info(struct mp_filter *f);
 
-struct AVBufferRef;
-struct AVBufferRef *mp_filter_load_hwdec_device(struct mp_filter *f, int avtype);
+struct mp_hwdec_ctx *mp_filter_load_hwdec_device(struct mp_filter *f, int imgfmt);
 
 // Perform filtering. This runs until the filter graph is blocked (due to
 // missing external input or unread output). It returns whether any outside

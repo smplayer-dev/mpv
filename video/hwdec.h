@@ -13,9 +13,10 @@ struct mp_hwdec_ctx {
     // libavutil-wrapped context, if available.
     struct AVBufferRef *av_device_ref; // AVHWDeviceContext*
 
-    // List of IMGFMT_s, terminated with 0. NULL if N/A.
+    // List of allowed IMGFMT_s, terminated with 0.
+    // If NULL, all software formats are considered to be supported.
     const int *supported_formats;
-    // HW format for which above hw_subfmts are valid.
+    // HW format used by the hwdec
     int hw_imgfmt;
 };
 
@@ -25,17 +26,8 @@ struct mp_hwdec_devices;
 struct mp_hwdec_devices *hwdec_devices_create(void);
 void hwdec_devices_destroy(struct mp_hwdec_devices *devs);
 
-// Return the device context for the given API type. Returns NULL if none
-// available. Logically, the returned pointer remains valid until VO
-// uninitialization is started (all users of it must be uninitialized before).
-// hwdec_devices_request() may be used before this to lazily load devices.
-// Contains a wrapped AVHWDeviceContext.
-// Beware that this creates a _new_ reference.
-struct AVBufferRef *hwdec_devices_get_lavc(struct mp_hwdec_devices *devs,
-                                           int av_hwdevice_type);
-
-struct mp_hwdec_ctx *hwdec_devices_get_by_lavc(struct mp_hwdec_devices *devs,
-                                               int av_hwdevice_type);
+struct mp_hwdec_ctx *hwdec_devices_get_by_imgfmt(struct mp_hwdec_devices *devs,
+                                                 int hw_imgfmt);
 
 // For code which still strictly assumes there is 1 (or none) device.
 struct mp_hwdec_ctx *hwdec_devices_get_first(struct mp_hwdec_devices *devs);
@@ -51,15 +43,23 @@ void hwdec_devices_add(struct mp_hwdec_devices *devs, struct mp_hwdec_ctx *ctx);
 // not added yet. This is not thread-safe.
 void hwdec_devices_remove(struct mp_hwdec_devices *devs, struct mp_hwdec_ctx *ctx);
 
+struct hwdec_imgfmt_request {
+    int imgfmt;
+    bool probing;
+};
+
 // Can be used to enable lazy loading of an API with hwdec_devices_request().
 // If used at all, this must be set/unset during initialization/uninitialization,
 // as concurrent use with hwdec_devices_request() is a race condition.
 void hwdec_devices_set_loader(struct mp_hwdec_devices *devs,
-    void (*load_api)(void *ctx), void *load_api_ctx);
+    void (*load_api)(void *ctx, struct hwdec_imgfmt_request *params),
+    void *load_api_ctx);
 
-// Cause VO to lazily load all devices, and will block until this is done (even
-// if not available).
-void hwdec_devices_request_all(struct mp_hwdec_devices *devs);
+// Cause VO to lazily load all devices for a specified img format, and will
+// block until this is done (even if not available). Pass IMGFMT_NONE to load
+// all available devices.
+void hwdec_devices_request_for_img_fmt(struct mp_hwdec_devices *devs,
+                                       struct hwdec_imgfmt_request *params);
 
 // Return "," concatenated list (for introspection/debugging). Use talloc_free().
 char *hwdec_devices_get_names(struct mp_hwdec_devices *devs);
@@ -91,6 +91,7 @@ const struct hwcontext_fns *hwdec_get_hwcontext_fns(int av_hwdevice_type);
 
 extern const struct hwcontext_fns hwcontext_fns_cuda;
 extern const struct hwcontext_fns hwcontext_fns_d3d11;
+extern const struct hwcontext_fns hwcontext_fns_drmprime;
 extern const struct hwcontext_fns hwcontext_fns_dxva2;
 extern const struct hwcontext_fns hwcontext_fns_vaapi;
 extern const struct hwcontext_fns hwcontext_fns_vdpau;

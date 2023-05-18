@@ -86,23 +86,24 @@ static const demuxer_desc_t *const demuxer_list[] = {
 
 struct demux_opts {
     int enable_cache;
-    int disk_cache;
+    bool disk_cache;
     int64_t max_bytes;
     int64_t max_bytes_bw;
-    int donate_fw;
+    bool donate_fw;
     double min_secs;
-    int force_seekable;
+    double hyst_secs;
+    bool force_seekable;
     double min_secs_cache;
-    int access_references;
+    bool access_references;
     int seekable_cache;
-    int create_ccs;
+    bool create_ccs;
     char *record_file;
     int video_back_preroll;
     int audio_back_preroll;
     int back_batch[STREAM_TYPE_COUNT];
     double back_seek_size;
     char *meta_cp;
-    int force_retry_eof;
+    bool force_retry_eof;
 };
 
 #define OPT_BASE_STRUCT struct demux_opts
@@ -113,19 +114,20 @@ const struct m_sub_options demux_conf = {
     .opts = (const struct m_option[]){
         {"cache", OPT_CHOICE(enable_cache,
             {"no", 0}, {"auto", -1}, {"yes", 1})},
-        {"cache-on-disk", OPT_FLAG(disk_cache)},
+        {"cache-on-disk", OPT_BOOL(disk_cache)},
         {"demuxer-readahead-secs", OPT_DOUBLE(min_secs), M_RANGE(0, DBL_MAX)},
+        {"demuxer-hysteresis-secs", OPT_DOUBLE(hyst_secs), M_RANGE(0, DBL_MAX)},
         {"demuxer-max-bytes", OPT_BYTE_SIZE(max_bytes),
             M_RANGE(0, M_MAX_MEM_BYTES)},
         {"demuxer-max-back-bytes", OPT_BYTE_SIZE(max_bytes_bw),
             M_RANGE(0, M_MAX_MEM_BYTES)},
-        {"demuxer-donate-buffer", OPT_FLAG(donate_fw)},
-        {"force-seekable", OPT_FLAG(force_seekable)},
+        {"demuxer-donate-buffer", OPT_BOOL(donate_fw)},
+        {"force-seekable", OPT_BOOL(force_seekable)},
         {"cache-secs", OPT_DOUBLE(min_secs_cache), M_RANGE(0, DBL_MAX)},
-        {"access-references", OPT_FLAG(access_references)},
+        {"access-references", OPT_BOOL(access_references)},
         {"demuxer-seekable-cache", OPT_CHOICE(seekable_cache,
             {"auto", -1}, {"no", 0}, {"yes", 1})},
-        {"sub-create-cc-track", OPT_FLAG(create_ccs)},
+        {"sub-create-cc-track", OPT_BOOL(create_ccs)},
         {"stream-record", OPT_STRING(record_file)},
         {"video-backward-overlap", OPT_CHOICE(video_back_preroll, {"auto", -1}),
             M_RANGE(0, 1024)},
@@ -138,7 +140,7 @@ const struct m_sub_options demux_conf = {
         {"demuxer-backward-playback-step", OPT_DOUBLE(back_seek_size),
             M_RANGE(0, DBL_MAX)},
         {"metadata-codepage", OPT_STRING(meta_cp)},
-        {"demuxer-force-retry-on-eof", OPT_FLAG(force_retry_eof),
+        {"demuxer-force-retry-on-eof", OPT_BOOL(force_retry_eof),
          .deprecation_message = "temporary debug option, no replacement"},
         {0}
     },
@@ -147,11 +149,11 @@ const struct m_sub_options demux_conf = {
         .enable_cache = -1, // auto
         .max_bytes = 150 * 1024 * 1024,
         .max_bytes_bw = 50 * 1024 * 1024,
-        .donate_fw = 1,
+        .donate_fw = true,
         .min_secs = 1.0,
         .min_secs_cache = 1000.0 * 60 * 60,
         .seekable_cache = -1,
-        .access_references = 1,
+        .access_references = true,
         .video_back_preroll = -1,
         .audio_back_preroll = -1,
         .back_seek_size = 60,
@@ -210,6 +212,8 @@ struct demux_internal {
     bool warned_queue_overflow;
     bool eof;                   // whether we're in EOF state
     double min_secs;
+    double hyst_secs;           // stop reading till there's hyst_secs remaining
+    bool hyst_active;
     size_t max_bytes;
     size_t max_bytes_bw;
     bool seekable_cache;
@@ -467,7 +471,7 @@ static void prune_old_packets(struct demux_internal *in);
 static void dumper_close(struct demux_internal *in);
 static void demux_convert_tags_charset(struct demuxer *demuxer);
 
-static uint64_t get_foward_buffered_bytes(struct demux_stream *ds)
+static uint64_t get_forward_buffered_bytes(struct demux_stream *ds)
 {
     if (!ds->reader_head)
         return 0;
@@ -537,7 +541,7 @@ static void check_queue_consistency(struct demux_internal *in)
                 // ...reader_head and others must be in the queue.
                 assert(is_forward == !!queue->ds->reader_head);
                 assert(kf_found == !!queue->keyframe_latest);
-                uint64_t fw_bytes2 = get_foward_buffered_bytes(queue->ds);
+                uint64_t fw_bytes2 = get_forward_buffered_bytes(queue->ds);
                 assert(fw_bytes == fw_bytes2);
             }
 
@@ -974,6 +978,7 @@ struct sh_stream *demux_alloc_sh_stream(enum stream_type type)
         .index = -1,
         .ff_index = -1,     // may be overwritten by demuxer
         .demuxer_id = -1,   // ... same
+        .program_id = -1,   // ... same
         .codec = talloc_zero(sh, struct mp_codec_params),
         .tags = talloc_zero(sh, struct mp_tags),
     };
@@ -1272,6 +1277,8 @@ static struct sh_stream *demuxer_get_cc_track_locked(struct sh_stream *stream)
             return NULL;
         sh->codec->codec = "eia_608";
         sh->default_track = true;
+        sh->hls_bitrate = stream->hls_bitrate;
+        sh->program_id = stream->program_id;
         stream->ds->cc = sh;
         demux_add_sh_stream_locked(stream->ds->in, sh);
         sh->ds->ignore_eof = true;
@@ -1685,7 +1692,7 @@ static void attempt_range_joining(struct demux_internal *in)
     // Try to find a join point, where packets obviously overlap. (It would be
     // better and faster to do this incrementally, but probably too complex.)
     // The current range can overlap arbitrarily with the next one, not only by
-    // by the seek overlap, but for arbitrary packet readahead as well.
+    // the seek overlap, but for arbitrary packet readahead as well.
     // We also drop the overlapping packets (if joining fails, we discard the
     // entire next range anyway, so this does no harm).
     for (int n = 0; n < in->num_streams; n++) {
@@ -2117,7 +2124,7 @@ static void add_packet_locked(struct sh_stream *stream, demux_packet_t *dp)
         ds->base_ts = queue->last_ts;
 
     const char *num_pkts = queue->head == queue->tail ? "1" : ">1";
-    uint64_t fw_bytes = get_foward_buffered_bytes(ds);
+    uint64_t fw_bytes = get_forward_buffered_bytes(ds);
     MP_TRACE(in, "append packet to %s: size=%zu pts=%f dts=%f pos=%"PRIi64" "
              "[num=%s size=%zd]\n", stream_type_name(stream->type),
              dp->len, dp->pts, dp->dts, dp->pos, num_pkts, (size_t)fw_bytes);
@@ -2205,17 +2212,23 @@ static bool read_packet(struct demux_internal *in)
         if (ds->eager && ds->queue->last_ts != MP_NOPTS_VALUE &&
             in->min_secs > 0 && ds->base_ts != MP_NOPTS_VALUE &&
             ds->queue->last_ts >= ds->base_ts &&
-            !in->back_demuxing)
-            prefetch_more |= ds->queue->last_ts - ds->base_ts < in->min_secs;
-        total_fw_bytes += get_foward_buffered_bytes(ds);
+            !in->back_demuxing) {
+            if (ds->queue->last_ts - ds->base_ts <= in->hyst_secs)
+                in->hyst_active = false;
+            if (!in->hyst_active)
+                prefetch_more |= ds->queue->last_ts - ds->base_ts < in->min_secs;
+        }
+        total_fw_bytes += get_forward_buffered_bytes(ds);
     }
 
     MP_TRACE(in, "bytes=%zd, read_more=%d prefetch_more=%d, refresh_more=%d\n",
              (size_t)total_fw_bytes, read_more, prefetch_more, refresh_more);
     if (total_fw_bytes >= in->max_bytes) {
         // if we hit the limit just by prefetching, simply stop prefetching
-        if (!read_more)
+        if (!read_more) {
+            in->hyst_active = !!in->hyst_secs;
             return false;
+        }
         if (!in->warned_queue_overflow) {
             in->warned_queue_overflow = true;
             MP_WARN(in, "Too many packets in the demuxer packet queues:\n");
@@ -2226,7 +2239,7 @@ static bool read_packet(struct demux_internal *in)
                     for (struct demux_packet *dp = ds->reader_head;
                          dp; dp = dp->next)
                         num_pkts++;
-                    uint64_t fw_bytes = get_foward_buffered_bytes(ds);
+                    uint64_t fw_bytes = get_forward_buffered_bytes(ds);
                     MP_WARN(in, "  %s/%d: %zd packets, %zd bytes%s%s\n",
                             stream_type_name(ds->type), n,
                             num_pkts, (size_t)fw_bytes,
@@ -2307,7 +2320,7 @@ static void prune_old_packets(struct demux_internal *in)
         uint64_t fw_bytes = 0;
         for (int n = 0; n < in->num_streams; n++) {
             struct demux_stream *ds = in->streams[n]->ds;
-            fw_bytes += get_foward_buffered_bytes(ds);
+            fw_bytes += get_forward_buffered_bytes(ds);
         }
         uint64_t max_avail = in->max_bytes_bw;
         // Backward cache (if enabled at all) can use unused forward cache.
@@ -2415,10 +2428,6 @@ static void execute_trackswitch(struct demux_internal *in)
 {
     in->tracks_switched = false;
 
-    bool any_selected = false;
-    for (int n = 0; n < in->num_streams; n++)
-        any_selected |= in->streams[n]->ds->selected;
-
     pthread_mutex_unlock(&in->lock);
 
     if (in->d_thread->desc->switched_tracks)
@@ -2466,6 +2475,7 @@ static void update_opts(struct demux_internal *in)
     struct demux_opts *opts = in->opts;
 
     in->min_secs = opts->min_secs;
+    in->hyst_secs = opts->hyst_secs;
     in->max_bytes = opts->max_bytes;
     in->max_bytes_bw = opts->max_bytes_bw;
 
@@ -2647,8 +2657,7 @@ static int dequeue_packet(struct demux_stream *ds, double min_pts,
             return -1;
         ds->attached_picture_added = true;
         struct demux_packet *pkt = demux_copy_packet(ds->sh->attached_picture);
-        if (!pkt)
-            abort();
+        MP_HANDLE_OOM(pkt);
         pkt->stream = ds->sh->index;
         *res = pkt;
         return 1;
@@ -2858,7 +2867,7 @@ static const char *d_level(enum demux_check level)
     case DEMUX_CHECK_REQUEST:return "request";
     case DEMUX_CHECK_NORMAL: return "normal";
     }
-    abort();
+    MP_ASSERT_UNREACHABLE();
 }
 
 static int decode_float(char *str, float *out)
@@ -2939,6 +2948,24 @@ static struct replaygain_data *decode_rgain(struct mp_log *log,
     {
         rg.album_gain = rg.track_gain;
         rg.album_peak = rg.track_peak;
+        return talloc_dup(NULL, &rg);
+    }
+
+    // The r128 replaygain tags declared in RFC 7845 for opus files. The tags
+    // are generated with EBU-R128, which does not use peak meters. And the
+    // values are stored as a Q7.8 fixed point number in dB.
+    if (decode_gain(log, tags, "R128_TRACK_GAIN", &rg.track_gain) >= 0) {
+        if (decode_gain(log, tags, "R128_ALBUM_GAIN", &rg.album_gain) < 0) {
+            // Album gain is undefined; fall back to track gain.
+            rg.album_gain = rg.track_gain;
+        }
+        rg.track_gain /= 256.;
+        rg.album_gain /= 256.;
+
+        // Add 5dB to compensate for the different reference levels between
+        // our reference of ReplayGain 2 (-18 LUFS) and EBU R128 (-23 LUFS).
+        rg.track_gain += 5.;
+        rg.album_gain += 5.;
         return talloc_dup(NULL, &rg);
     }
 
@@ -3239,7 +3266,7 @@ struct parent_stream_info {
     bool is_streaming;
     int stream_origin;
     struct mp_cancel *cancel;
-    char *filename;
+    const char *filename;
 };
 
 static struct demuxer *open_given_type(struct mpv_global *global,
@@ -3392,8 +3419,10 @@ static struct demuxer *demux_open(struct stream *stream,
             check_levels = d_force;
         }
         for (int n = 0; demuxer_list[n]; n++) {
-            if (strcmp(demuxer_list[n]->name, force_format) == 0)
+            if (strcmp(demuxer_list[n]->name, force_format) == 0) {
                 check_desc = demuxer_list[n];
+                break;
+            }
         }
         if (!check_desc) {
             mp_err(log, "Demuxer %s does not exist.\n", force_format);
@@ -3407,7 +3436,7 @@ static struct demuxer *demux_open(struct stream *stream,
         .is_streaming = stream->streaming,
         .stream_origin = stream->stream_origin,
         .cancel = cancel,
-        .filename = talloc_strdup(NULL, stream->url),
+        .filename = stream->url,
     };
 
     // Test demuxers from first to last, one pass for each check_levels[] entry
@@ -3429,7 +3458,6 @@ static struct demuxer *demux_open(struct stream *stream,
     }
 
 done:
-    talloc_free(sinfo.filename);
     talloc_free(log);
     return demuxer;
 }
@@ -4492,7 +4520,7 @@ void demux_get_reader_state(struct demuxer *demuxer, struct demux_reader_state *
             r->ts_end = MP_PTS_MAX(r->ts_end, ds->queue->last_ts);
             any_packets |= !!ds->reader_head;
         }
-        r->fw_bytes += get_foward_buffered_bytes(ds);
+        r->fw_bytes += get_forward_buffered_bytes(ds);
     }
     r->idle = (!in->reading && !r->underrun) || r->eof;
     r->underrun &= !r->idle && in->threading;

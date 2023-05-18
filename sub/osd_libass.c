@@ -21,8 +21,6 @@
 #include <string.h>
 #include <assert.h>
 
-#include "config.h"
-
 #include "mpv_talloc.h"
 #include "misc/bstr.h"
 #include "common/common.h"
@@ -53,7 +51,7 @@ static void create_ass_renderer(struct osd_state *osd, struct ass_state *ass)
         return;
 
     ass->log = mp_log_new(NULL, osd->log, "libass");
-    ass->library = mp_ass_init(osd->global, ass->log);
+    ass->library = mp_ass_init(osd->global, osd->opts->osd_style, ass->log);
     ass_add_font(ass->library, "mpv-osd-symbols", (void *)osd_font_pfb,
                  sizeof(osd_font_pfb) - 1);
 
@@ -133,7 +131,9 @@ static void create_ass_track(struct osd_state *osd, struct osd_object *obj,
     track->WrapStyle = 1; // end-of-line wrapping instead of smart wrapping
     track->Kerning = true;
     track->ScaledBorderAndShadow = true;
-
+#if LIBASS_VERSION >= 0x01600010
+    ass_track_set_feature(track, ASS_FEATURE_WRAP_UNICODE, 1);
+#endif
     update_playres(ass, &obj->vo_res);
 }
 
@@ -570,6 +570,11 @@ void osd_set_external(struct osd_state *osd, struct osd_external_ass *ov)
         goto done;
     }
 
+    if (!entry->ov.hidden || !ov->hidden) {
+        obj->changed = true;
+        osd->want_redraw_notification = true;
+    }
+
     entry->ov.format = ov->format;
     if (!entry->ov.data)
         entry->ov.data = talloc_strdup(entry, "");
@@ -582,11 +587,6 @@ void osd_set_external(struct osd_state *osd, struct osd_external_ass *ov)
     entry->ov.hidden = ov->hidden;
 
     update_external(osd, obj, entry);
-
-    if (!entry->ov.hidden) {
-        obj->changed = true;
-        osd->want_redraw_notification = true;
-    }
 
     if (zorder_changed) {
         qsort(obj->externals, obj->num_externals, sizeof(obj->externals[0]),

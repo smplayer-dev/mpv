@@ -31,6 +31,7 @@
 #include "options/options.h"
 #include "common/common.h"
 #include "audio/aframe.h"
+#include "audio/chmap_avchannel.h"
 #include "audio/format.h"
 #include "audio/fmt-conversion.h"
 #include "filters/filter_internal.h"
@@ -124,8 +125,13 @@ static int init(struct ao *ao)
     if (!ao_chmap_sel_adjust2(ao, &sel, &ao->channels, false))
         goto fail;
     mp_chmap_reorder_to_lavc(&ao->channels);
+
+#if !HAVE_AV_CHANNEL_LAYOUT
     encoder->channels = ao->channels.num;
     encoder->channel_layout = mp_chmap_to_lavc(&ao->channels);
+#else
+    mp_chmap_to_av_layout(&encoder->ch_layout, &ao->channels);
+#endif
 
     encoder->sample_fmt = AV_SAMPLE_FMT_NONE;
 
@@ -176,18 +182,8 @@ fail:
 static void uninit(struct ao *ao)
 {
     struct priv *ac = ao->priv;
-    struct encode_lavc_context *ectx = ao->encode_lavc_ctx;
 
     if (!ac->shutdown) {
-        double outpts = ac->expected_next_pts;
-
-        pthread_mutex_lock(&ectx->lock);
-        if (!ac->enc->options->rawts)
-            outpts += ectx->discontinuity_pts_offset;
-        pthread_mutex_unlock(&ectx->lock);
-
-        outpts += encoder_get_offset(ac->enc);
-
         if (!write_frame(ao, MP_EOF_FRAME))
             MP_WARN(ao, "could not flush last frame\n");
         encoder_encode(ac->enc, NULL);
@@ -204,8 +200,7 @@ static void encode(struct ao *ao, struct mp_aframe *af)
     double outpts = mp_aframe_get_pts(af);
 
     AVFrame *frame = mp_aframe_to_avframe(af);
-    if (!frame)
-        abort();
+    MP_HANDLE_OOM(frame);
 
     frame->pts = rint(outpts * av_q2d(av_inv_q(encoder->time_base)));
 

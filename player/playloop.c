@@ -23,7 +23,6 @@
 
 #include "client.h"
 #include "command.h"
-#include "config.h"
 #include "core.h"
 #include "mpv_talloc.h"
 #include "screenshot.h"
@@ -180,10 +179,6 @@ void set_pause_state(struct MPContext *mpctx, bool user_pause)
         } else {
             (void)get_relative_time(mpctx); // ignore time that passed during pause
         }
-
-        // For some reason, these events are supposed to be sent even if only
-        // the internal pause state changed (and "pause" property didn't)... OK.
-        mp_notify(mpctx, opts->pause ? MPV_EVENT_PAUSE : MPV_EVENT_UNPAUSE, 0);
     }
 
     update_core_idle_state(mpctx);
@@ -201,7 +196,8 @@ void update_screensaver_state(struct MPContext *mpctx)
     if (!mpctx->video_out)
         return;
 
-    bool saver_state = !mpctx->playback_active || !mpctx->opts->stop_screensaver;
+    bool saver_state = (!mpctx->playback_active || !mpctx->opts->stop_screensaver) &&
+                       mpctx->opts->stop_screensaver != 2;
     vo_control_async(mpctx->video_out, saver_state ? VOCTRL_RESTORE_SCREENSAVER
                                                    : VOCTRL_KILL_SCREENSAVER, NULL);
 }
@@ -294,7 +290,7 @@ static void mp_seek(MPContext *mpctx, struct seek_params seek)
         if (len >= 0)
             seek_pts = seek.amount * len;
         break;
-    default: abort();
+    default: MP_ASSERT_UNREACHABLE();
     }
 
     double demux_pts = seek_pts;
@@ -461,7 +457,7 @@ void queue_seek(struct MPContext *mpctx, enum seek_type type, double amount,
         *seek = (struct seek_params){ 0 };
         return;
     }
-    abort();
+    MP_ASSERT_UNREACHABLE();
 }
 
 void execute_queued_seek(struct MPContext *mpctx)
@@ -945,13 +941,16 @@ static void handle_keep_open(struct MPContext *mpctx)
 {
     struct MPOpts *opts = mpctx->opts;
     if (opts->keep_open && mpctx->stop_play == AT_END_OF_FILE &&
-        (opts->keep_open == 2 || !playlist_get_next(mpctx->playlist, 1) &&
-        opts->loop_times == 1))
+        (opts->keep_open == 2 ||
+        (!playlist_get_next(mpctx->playlist, 1) && opts->loop_times == 1)))
     {
         mpctx->stop_play = KEEP_PLAYING;
         if (mpctx->vo_chain) {
-            if (!vo_has_frame(mpctx->video_out)) // EOF not reached normally
+            if (!vo_has_frame(mpctx->video_out)) { // EOF not reached normally
                 seek_to_last_frame(mpctx);
+                mpctx->audio_status = STATUS_EOF;
+                mpctx->video_status = STATUS_EOF;
+            }
         }
         if (opts->keep_open_pause) {
             if (mpctx->ao && ao_is_playing(mpctx->ao))
@@ -966,7 +965,7 @@ static void handle_chapter_change(struct MPContext *mpctx)
     int chapter = get_current_chapter(mpctx);
     if (chapter != mpctx->last_chapter) {
         mpctx->last_chapter = chapter;
-        mp_notify(mpctx, MPV_EVENT_CHAPTER_CHANGE, NULL);
+        mp_notify(mpctx, MP_EVENT_CHAPTER_CHANGE, NULL);
     }
 }
 
@@ -1036,6 +1035,8 @@ int handle_force_window(struct MPContext *mpctx, bool force)
         };
         if (vo_reconfig(vo, &p) < 0)
             goto err;
+        struct track *track = mpctx->current_track[0][STREAM_VIDEO];
+        update_content_type(mpctx, track);
         update_screensaver_state(mpctx);
         vo_set_paused(vo, true);
         vo_redraw(vo);
@@ -1142,7 +1143,9 @@ static void handle_playback_restart(struct MPContext *mpctx)
             if (opts->osd_playing_msg && opts->osd_playing_msg[0]) {
                 char *msg =
                     mp_property_expand_escaped_string(mpctx, opts->osd_playing_msg);
-                set_osd_msg(mpctx, 1, opts->osd_duration, "%s", msg);
+                set_osd_msg(mpctx, 1, opts->osd_playing_msg_duration ?
+                            opts->osd_playing_msg_duration : opts->osd_duration,
+                            "%s", msg);
                 talloc_free(msg);
             }
         }

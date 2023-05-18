@@ -137,7 +137,7 @@ class Window: NSWindow, NSWindowDelegate {
             setFrame(frame, display: true)
         }
 
-        if Bool(mpv?.opts.native_fs ?? 1) {
+        if Bool(mpv?.opts.native_fs ?? true) {
             super.toggleFullScreen(sender)
         } else {
             if !isInFullscreen {
@@ -554,7 +554,7 @@ class Window: NSWindow, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        common.setCursorVisiblility(true)
+        common.setCursorVisibility(true)
     }
 
     func windowDidBecomeKey(_ notification: Notification) {

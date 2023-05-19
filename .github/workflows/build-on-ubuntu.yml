@@ -1,7 +1,7 @@
 name: Build ubuntu packages
 env:
-  version: '0.34.0'
-  branch: 'mod-0.34'
+  version: '0.35.1'
+  branch: 'mod-0.35.1'
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
       matrix:
         config:
           - { name: 'xenial', os: 'ubuntu-latest', container: 'wachii/ubuntu-qt:16.04' }
-          - { name: 'bionic', os: 'ubuntu-18.04', container: '' }
+          #- { name: 'bionic', os: 'ubuntu-18.04', container: '' }
           - { name: 'focal', os: 'ubuntu-20.04', container: '' }
 
     runs-on: ${{ matrix.config.os }}

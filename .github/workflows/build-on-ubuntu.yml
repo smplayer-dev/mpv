@@ -15,7 +15,7 @@ jobs:
       matrix:
         config:
           - { name: 'xenial', os: 'ubuntu-latest', container: 'wachii/ubuntu-qt:16.04' }
-          - { name: 'bionic', os: 'ubuntu-18.04', container: 'wachii/ubuntu-qt:18.04' }
+          - { name: 'bionic', os: 'ubuntu-latest', container: 'wachii/ubuntu-qt:18.04' }
           - { name: 'focal', os: 'ubuntu-20.04', container: '' }
 
     runs-on: ${{ matrix.config.os }}

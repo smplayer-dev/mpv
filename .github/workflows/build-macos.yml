@@ -33,16 +33,26 @@ jobs:
             ./bootstrap.py
             ./waf configure
             ./waf
-            TOOLS/osxbundle.py build/mpv
+            #TOOLS/osxbundle.py build/mpv
 
       - name: Build package
+        if: ${{ false }}
         run: |
             mkdir -p release
             cp -r build/mpv.app release
             cd release
             tar -cjf ../mpv-macos-11.tar.bz2 *
+            
+      - name: Build package
+        run: |
+            mkdir -p package/mpv.app/Contents/MacOS/
+            cp build/mpv package/mpv.app/Contents/MacOS/
+            dylibbundler -od -b -x ./package/mpv.app/Contents/MacOS/mpv -d ./package/mpv.app/Contents/MacOS/lib -p @executable_path/lib
+            cd package
+            tar -cjf ../mpv-macos-11.tar.bz2 mpv.app/
 
       - name: Build Apple Disk Image
+        if: ${{ false }}
         run: |
             brew install create-dmg
             create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv-11.dmg release
@@ -55,7 +65,7 @@ jobs:
           path: ./mpv-macos-11.tar.bz2
 
       - name: Create artifact 2
-        #if: ${{ false }}
+        if: ${{ false }}
         uses: actions/upload-artifact@v2
         with:
          name: mpv-11.dmg

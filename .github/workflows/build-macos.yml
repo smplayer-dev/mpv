@@ -20,6 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+            brew install dylibbundler
             brew install yasm nasm pkg-config libass ffmpeg
             brew install libarchive luajit-openresty mujs uchardet
             #brew install luajit --HEAD

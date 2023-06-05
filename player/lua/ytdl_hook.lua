@@ -448,7 +448,7 @@ local function formats_to_edl(json, formats, use_all_formats)
             end
         end
 
-        local url = edl_track or track.url
+        local url = track.url
         local hdr = {"!new_stream", "!no_clip", "!no_chapters"}
         local skip = #tracks == 0
         local params = ""

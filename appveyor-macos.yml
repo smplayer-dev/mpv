@@ -1,0 +1,48 @@
+version: 0.36.0.b{build}-{branch}
+image: macos-catalina
+#image: macos
+
+branches:
+  only:
+    #- mod-0.35.1
+    - master
+
+environment:
+  global:
+    HOMEBREW_NO_INSTALL_CLEANUP: 1
+    CURL_SSL_BACKEND: 'secure-transport'
+    HOMEBREW_FORCE_BREWED_CURL: 1
+    HOMEBREW_NO_AUTO_UPDATE: 1
+
+install: |-
+  export PATH="/usr/local/Cellar/pkg-config/0.29.2_3/bin:${PATH}"
+  git config --global http.sslVerify false
+  brew install dylibbundler create-dmg
+  #brew install create-dmg
+  brew install yasm nasm libass ffmpeg
+  #brew install luajit --HEAD
+  brew install libarchive luajit-openresty mujs uchardet
+  export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/opt/libarchive/lib/pkgconfig:/usr/local/opt/luajit-openresty/lib/pkgconfig
+  echo $PKG_CONFIG_PATH
+
+build_script: |-
+  ./bootstrap.py
+  ./waf configure
+  ./waf
+  #TOOLS/osxbundle.py build/mpv
+
+after_build: |-
+  #mkdir release
+  #cp -r build/mpv.app release
+  #create-dmg --sandbox-safe --no-internet-enable --volname "mpv" --app-drop-link 200 185 mpv-10.15-av.dmg release
+  #cd release
+  #tar -cjf ../mpv-macos-10.15-av.tar.bz2 *
+  mkdir -p package/mpv.app/Contents/MacOS/
+  cp build/mpv package/mpv.app/Contents/MacOS/
+  dylibbundler -od -b -x ./package/mpv.app/Contents/MacOS/mpv -d ./package/mpv.app/Contents/MacOS/lib -p @executable_path/lib
+  cd package
+  tar -cjf ../mpv-macos-10.15-av.tar.bz2 mpv.app/
+
+artifacts:
+- path: mpv-macos-10.15-av.tar.bz2
+  name: mpv-macos-10.15-av.tar.bz2

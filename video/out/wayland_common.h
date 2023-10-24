@@ -49,6 +49,8 @@ struct vo_wayland_state {
     struct wl_registry      *registry;
     struct wl_shm           *shm;
     struct wl_surface       *surface;
+    struct wl_surface       *osd_surface;
+    struct wl_subsurface    *osd_subsurface;
     struct wl_surface       *video_surface;
     struct wl_surface       *callback_surface;
     struct wl_subsurface    *video_subsurface;
@@ -60,7 +62,6 @@ struct vo_wayland_state {
     struct vo_wayland_output *current_output;
     int bounded_height;
     int bounded_width;
-    int gcd;
     int reduced_height;
     int reduced_width;
     int toplevel_width;
@@ -72,7 +73,9 @@ struct vo_wayland_state {
     bool focused;
     bool frame_wait;
     bool hidden;
+    bool locked_size;
     bool state_change;
+    bool tiled;
     bool toplevel_configured;
     int display_fd;
     int mouse_x;
@@ -88,6 +91,11 @@ struct vo_wayland_state {
     void *content_type;
     int current_content_type;
 
+    /* cursor-shape */
+    /* TODO: unvoid these if required wayland protocols is bumped to 1.32+ */
+    void *cursor_shape_manager;
+    void *cursor_shape_device;
+
     /* fractional-scale */
     /* TODO: unvoid these if required wayland protocols is bumped to 1.31+ */
     void *fractional_scale_manager;
@@ -99,15 +107,10 @@ struct vo_wayland_state {
 
     /* linux-dmabuf */
     struct zwp_linux_dmabuf_v1 *dmabuf;
-    /* TODO: unvoid this if required wayland protocols is bumped to 1.24+ */
-    void *dmabuf_feedback;
+    struct zwp_linux_dmabuf_feedback_v1 *dmabuf_feedback;
     wayland_format *format_map;
     uint32_t format_size;
     bool using_dmabuf_wayland;
-    /* TODO: remove these once zwp_linux_dmabuf_v1 version 2 support is removed. */
-    int *drm_formats;
-    int drm_format_ct;
-    int drm_format_ct_max;
 
     /* presentation-time */
     struct wp_presentation  *presentation;
@@ -133,6 +136,7 @@ struct vo_wayland_state {
     /* viewporter */
     struct wp_viewporter *viewporter;
     struct wp_viewport   *viewport;
+    struct wp_viewport   *osd_viewport;
     struct wp_viewport   *video_viewport;
 
     /* Input */
@@ -144,6 +148,8 @@ struct vo_wayland_state {
     struct xkb_keymap  *xkb_keymap;
     struct xkb_state   *xkb_state;
     uint32_t keyboard_code;
+    int mpkey;
+    int mpmod;
 
     /* DND */
     struct wl_data_device *dnd_ddev;

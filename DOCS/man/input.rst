@@ -369,8 +369,7 @@ Remember to quote string arguments in input.conf (see `Flat command syntax`_).
         behavior depends on the selected video output.
     <window>
         Save the contents of the mpv window. Typically scaled, with OSD and
-        subtitles. The exact behavior depends on the selected video output, and
-        if no support is available, this will act like ``video``.
+        subtitles. The exact behavior depends on the selected video output.
     <each-frame>
         Take a screenshot each frame. Issue this command again to stop taking
         screenshots. Note that you should disable frame-dropping when using
@@ -2712,6 +2711,9 @@ Property list
 ``secondary-sub-end``
     Same as ``sub-end``, but for the secondary subtitles.
 
+``sub-forced-only-cur``
+    Read-only - whether the current subtitle track is being shown in forced-only mode.
+
 ``playlist-pos`` (RW)
     Current position on playlist. The first entry is on position 0. Writing to
     this property may start playback at the new position.
@@ -2863,6 +2865,10 @@ Property list
 
     ``track-list/N/forced``
         ``yes``/true if the track has the forced flag set in the file,
+        ``no``/false or unavailable otherwise.
+
+    ``track-list/N/auto-forced-only``
+        ``yes``/true if the track was autoselected in forced-only mode,
         ``no``/false or unavailable otherwise.
 
     ``track-list/N/codec``

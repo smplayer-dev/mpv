@@ -382,17 +382,12 @@ static void flip_page(struct vo *vo)
 static void uninit(struct vo *vo)
 {
     struct priv *p = vo->priv;
-    struct vo_drm_state *drm = vo->drm;
-    int fd = drm->fd;
 
     vo_drm_uninit(vo);
 
     while (p->fb_queue_len > 0) {
         swapchain_step(vo);
     }
-
-    for (int i = 0; i < p->buf_count; ++i)
-        destroy_framebuffer(fd, p->bufs[i]);
 
     talloc_free(p->last_input);
     talloc_free(p->cur_frame);
@@ -445,12 +440,7 @@ static int query_format(struct vo *vo, int format)
 
 static int control(struct vo *vo, uint32_t request, void *arg)
 {
-    struct priv *p = vo->priv;
-
     switch (request) {
-    case VOCTRL_SCREENSHOT_WIN:
-        *(struct mp_image**)arg = mp_image_new_copy(p->cur_frame);
-        return VO_TRUE;
     case VOCTRL_SET_PANSCAN:
         if (vo->config_ok)
             reconfig(vo, vo->params);

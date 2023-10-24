@@ -322,12 +322,13 @@ static const struct gl_video_opts gl_video_opts_def = {
         .curve = TONE_MAPPING_AUTO,
         .curve_param = NAN,
         .max_boost = 1.0,
-        .crosstalk = 0.04,
         .decay_rate = 100.0,
         .scene_threshold_low = 5.5,
         .scene_threshold_high = 10.0,
+        .contrast_smoothness = 3.5,
     },
     .early_flush = -1,
+    .shader_cache = true,
     .hwdec_interop = "auto",
 };
 
@@ -374,6 +375,8 @@ const struct m_sub_options gl_video_conf = {
         {"target-trc", OPT_CHOICE_C(target_trc, mp_csp_trc_names)},
         {"target-peak", OPT_CHOICE(target_peak, {"auto", 0}),
             M_RANGE(10, 10000)},
+        {"target-contrast", OPT_CHOICE(target_contrast, {"auto", 0}, {"inf", -1}),
+            M_RANGE(10, 1000000)},
         {"tone-mapping", OPT_CHOICE(tone_map.curve,
             {"auto",     TONE_MAPPING_AUTO},
             {"clip",     TONE_MAPPING_CLIP},
@@ -389,8 +392,6 @@ const struct m_sub_options gl_video_conf = {
             {"st2094-10", TONE_MAPPING_ST2094_10})},
         {"tone-mapping-param", OPT_FLOATDEF(tone_map.curve_param)},
         {"inverse-tone-mapping", OPT_BOOL(tone_map.inverse)},
-        {"tone-mapping-crosstalk", OPT_FLOAT(tone_map.crosstalk),
-            M_RANGE(0.0, 0.3)},
         {"tone-mapping-max-boost", OPT_FLOAT(tone_map.max_boost),
             M_RANGE(1.0, 10.0)},
         {"tone-mapping-mode", OPT_CHOICE(tone_map.mode,
@@ -403,9 +404,14 @@ const struct m_sub_options gl_video_conf = {
         {"gamut-mapping-mode", OPT_CHOICE(tone_map.gamut_mode,
             {"auto",        GAMUT_AUTO},
             {"clip",        GAMUT_CLIP},
-            {"warn",        GAMUT_WARN},
+            {"perceptual",  GAMUT_PERCEPTUAL},
+            {"relative",    GAMUT_RELATIVE},
+            {"saturation",  GAMUT_SATURATION},
+            {"absolute",    GAMUT_ABSOLUTE},
             {"desaturate",  GAMUT_DESATURATE},
-            {"darken",      GAMUT_DARKEN})},
+            {"darken",      GAMUT_DARKEN},
+            {"warn",        GAMUT_WARN},
+            {"linear",      GAMUT_LINEAR})},
         {"hdr-compute-peak", OPT_CHOICE(tone_map.compute_peak,
             {"auto", 0},
             {"yes", 1},
@@ -416,6 +422,10 @@ const struct m_sub_options gl_video_conf = {
             M_RANGE(0, 20.0)},
         {"hdr-scene-threshold-high", OPT_FLOAT(tone_map.scene_threshold_high),
             M_RANGE(0, 20.0)},
+        {"hdr-contrast-recovery", OPT_FLOAT(tone_map.contrast_recovery),
+            M_RANGE(0, 2.0)},
+        {"hdr-contrast-smoothness", OPT_FLOAT(tone_map.contrast_smoothness),
+            M_RANGE(1.0, 100.0)},
         {"opengl-pbo", OPT_BOOL(pbo)},
         SCALER_OPTS("scale",  SCALER_SCALE),
         SCALER_OPTS("dscale", SCALER_DSCALE),
@@ -486,6 +496,7 @@ const struct m_sub_options gl_video_conf = {
         {"gamut-clipping", OPT_REMOVED("Replaced by --gamut-mapping-mode=desaturate")},
         {"tone-mapping-desaturate", OPT_REMOVED("Replaced by --tone-mapping-mode")},
         {"tone-mapping-desaturate-exponent", OPT_REMOVED("Replaced by --tone-mapping-mode")},
+        {"tone-mapping-crosstalk", OPT_REMOVED("Hard-coded as 0.04")},
         {0}
     },
     .size = sizeof(struct gl_video_opts),
@@ -3582,7 +3593,9 @@ static void frame_perf_data(struct pass_info pass[], struct mp_frame_perf *out)
         if (!pass[i].desc.len)
             break;
         out->perf[out->count] = pass[i].perf;
-        out->desc[out->count] = pass[i].desc.start;
+        strncpy(out->desc[out->count], pass[i].desc.start,
+                sizeof(out->desc[out->count]) - 1);
+        out->desc[out->count][sizeof(out->desc[out->count]) - 1] = '\0';
         out->count++;
     }
 }
@@ -4319,14 +4332,15 @@ struct mp_image *gl_video_get_image(struct gl_video *p, int imgfmt, int w, int h
     return res;
 }
 
-void gl_video_init_hwdecs(struct gl_video *p, struct mp_hwdec_devices *devs,
+void gl_video_init_hwdecs(struct gl_video *p, struct ra_ctx *ra_ctx,
+                          struct mp_hwdec_devices *devs,
                           bool load_all_by_default)
 {
-    assert(!p->hwdec_ctx.ra);
+    assert(!p->hwdec_ctx.ra_ctx);
     p->hwdec_ctx = (struct ra_hwdec_ctx) {
         .log = p->log,
         .global = p->global,
-        .ra = p->ra,
+        .ra_ctx = ra_ctx,
     };
 
     ra_hwdec_ctx_init(&p->hwdec_ctx, devs, p->opts.hwdec_interop, load_all_by_default);
@@ -4335,6 +4349,6 @@ void gl_video_init_hwdecs(struct gl_video *p, struct mp_hwdec_devices *devs,
 void gl_video_load_hwdecs_for_img_fmt(struct gl_video *p, struct mp_hwdec_devices *devs,
                                       struct hwdec_imgfmt_request *params)
 {
-    assert(p->hwdec_ctx.ra);
+    assert(p->hwdec_ctx.ra_ctx);
     ra_hwdec_ctx_load_fmt(&p->hwdec_ctx, devs, params);
 }

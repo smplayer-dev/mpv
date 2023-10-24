@@ -113,9 +113,14 @@ enum tone_mapping_mode {
 enum gamut_mode {
     GAMUT_AUTO,
     GAMUT_CLIP,
-    GAMUT_WARN,
+    GAMUT_PERCEPTUAL,
+    GAMUT_RELATIVE,
+    GAMUT_SATURATION,
+    GAMUT_ABSOLUTE,
     GAMUT_DESATURATE,
     GAMUT_DARKEN,
+    GAMUT_WARN,
+    GAMUT_LINEAR,
 };
 
 struct gl_tone_map_opts {
@@ -123,12 +128,13 @@ struct gl_tone_map_opts {
     float curve_param;
     float max_boost;
     bool inverse;
-    float crosstalk;
     int mode;
     int compute_peak;
     float decay_rate;
     float scene_threshold_low;
     float scene_threshold_high;
+    float contrast_recovery;
+    float contrast_smoothness;
     int gamut_mode;
     bool visualize;
 };
@@ -142,6 +148,7 @@ struct gl_video_opts {
     int target_prim;
     int target_trc;
     int target_peak;
+    int target_contrast;
     struct gl_tone_map_opts tone_map;
     bool correct_downscaling;
     bool linear_downscaling;
@@ -223,7 +230,8 @@ void gl_video_reset(struct gl_video *p);
 bool gl_video_showing_interpolated_frame(struct gl_video *p);
 
 struct mp_hwdec_devices;
-void gl_video_init_hwdecs(struct gl_video *p, struct mp_hwdec_devices *devs,
+void gl_video_init_hwdecs(struct gl_video *p, struct ra_ctx *ra_ctx,
+                          struct mp_hwdec_devices *devs,
                           bool load_all_by_default);
 struct hwdec_imgfmt_request;
 void gl_video_load_hwdecs_for_img_fmt(struct gl_video *p, struct mp_hwdec_devices *devs,

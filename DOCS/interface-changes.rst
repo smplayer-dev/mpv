@@ -27,6 +27,7 @@ Interface changes
 ::
 
  --- mpv 0.36.0 ---
+    - add `--target-contrast`
     - Target luminance value is now also applied when ICC profile is used.
       `--icc-use-luma` has been added to use ICC profile luminance value.
       If target luminance and ICC luminance is not used, old behavior apply,
@@ -75,6 +76,20 @@ Interface changes
     - add `--icc-cache` and `--gpu-shader-cache` options to control whether or not to
       save cache files for these features; explictly setting `--icc-cache-dir` and
       `--gpu-shader-cache` is no longer required
+    - remove the `--tone-mapping-crosstalk` option
+    - add `--gamut-mapping-mode=perceptual|relative|saturation|absolute|linear`
+    - add `--corner-rounding` option
+    - change `--subs-with-matching-audio` default from `yes` to `no`
+    - change `--slang` default from blank to `auto`
+    - add `--input-cursor-passthrough` option to allow pointer events to completely
+      passthrough the mpv window
+    - icc and gpu-shader cache are now saved by default (use --no-icc-shader-cache and
+      --no-gpu-shader-cache to disable)
+    - add `--directory-mode=recursive|lazy|ignore`
+    - `--hwdec=yes` is now mapped to `auto-safe` rather than `auto` (also used
+      by ctrl+h keybind)
+    - add `--hdr-contrast-recovery` and `--hdr-contrast-smoothness`
+    - include `--hdr-contrast-recovery` in the `gpu-hq` profile
  --- mpv 0.35.0 ---
     - add the `--vo=gpu-next` video output driver, as well as the options
       `--allow-delayed-peak-detect`, `--builtin-scalers`,

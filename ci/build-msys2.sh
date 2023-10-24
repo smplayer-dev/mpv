@@ -1,11 +1,15 @@
 #!/bin/sh -e
 
 if [ "$1" = "meson" ]; then
+    python3.11 -m venv venv
+    source ./venv/bin/activate
+    python -m pip install meson
     meson setup build            \
       -D cdda=enabled            \
       -D d3d-hwaccel=enabled     \
       -D d3d11=enabled           \
       -D dvdnav=enabled          \
+      -D egl-angle-lib=enabled   \
       -D egl-angle-win32=enabled \
       -D jpeg=enabled            \
       -D lcms2=enabled           \
@@ -35,6 +39,7 @@ if [ "$1" = "waf" ]; then
       --enable-d3d-hwaccel     \
       --enable-d3d11           \
       --enable-dvdnav          \
+      --enable-egl-angle-lib   \
       --enable-egl-angle-win32 \
       --enable-jpeg            \
       --enable-lcms2           \

@@ -35,6 +35,7 @@
 
 #include <X11/extensions/scrnsaver.h>
 #include <X11/extensions/dpms.h>
+#include <X11/extensions/shape.h>
 #include <X11/extensions/Xinerama.h>
 #include <X11/extensions/Xpresent.h>
 #include <X11/extensions/Xrandr.h>
@@ -149,6 +150,7 @@ static void vo_x11_move_resize(struct vo *vo, bool move, bool resize,
                                struct mp_rect rc);
 static void vo_x11_maximize(struct vo *vo);
 static void vo_x11_minimize(struct vo *vo);
+static void vo_x11_set_input_region(struct vo *vo, bool passthrough);
 static void vo_x11_sticky(struct vo *vo, bool sticky);
 
 #define XA(x11, s) (XInternAtom((x11)->display, # s, False))
@@ -982,15 +984,20 @@ static void vo_x11_dnd_handle_selection(struct vo *vo, XSelectionEvent *se)
 
     if (se->selection == XA(x11, XdndSelection) &&
         se->property == XAs(x11, DND_PROPERTY) &&
-        se->target == x11->dnd_requested_format)
+        se->target == x11->dnd_requested_format &&
+        x11->opts->drag_and_drop != -2)
     {
         int nitems;
         void *prop = x11_get_property(x11, x11->window, XAs(x11, DND_PROPERTY),
                                       x11->dnd_requested_format, 8, &nitems);
         if (prop) {
-            enum mp_dnd_action action =
-                x11->dnd_requested_action == XA(x11, XdndActionCopy) ?
-                DND_REPLACE : DND_APPEND;
+            enum mp_dnd_action action;
+            if (x11->opts->drag_and_drop >= 0) {
+                action = x11->opts->drag_and_drop;
+            } else {
+                action = x11->dnd_requested_action == XA(x11, XdndActionCopy) ?
+                         DND_REPLACE : DND_APPEND;
+            }
 
             char *mime_type = x11_dnd_mime_type(x11, x11->dnd_requested_format);
             MP_VERBOSE(x11, "Dropping type: %s (%s)\n",
@@ -1636,6 +1643,9 @@ static void vo_x11_map_window(struct vo *vo, struct mp_rect rc)
     vo_x11_selectinput_witherr(vo, x11->display, x11->window, events);
     XMapWindow(x11->display, x11->window);
 
+    if (x11->opts->cursor_passthrough)
+        vo_x11_set_input_region(vo, true);
+
     if (x11->opts->window_maximized) // don't override WM default on "no"
         vo_x11_maximize(vo);
     if (x11->opts->window_minimized) // don't override WM default on "no"
@@ -1973,13 +1983,31 @@ static void vo_x11_set_geometry(struct vo *vo)
     vo_x11_config_vo_window(vo);
 }
 
-bool vo_x11_check_visible(struct vo *vo) {
+bool vo_x11_check_visible(struct vo *vo)
+{
     struct vo_x11_state *x11 = vo->x11;
     struct mp_vo_opts *opts = x11->opts;
 
     bool render = !x11->hidden || opts->force_render ||
                   VS_IS_DISP(opts->video_sync);
     return render;
+}
+
+static void vo_x11_set_input_region(struct vo *vo, bool passthrough)
+{
+    struct vo_x11_state *x11 = vo->x11;
+
+    if (passthrough) {
+        XRectangle rect = {0, 0, 0, 0};
+        Region region = XCreateRegion();
+        XUnionRectWithRegion(&rect, region, region);
+        XShapeCombineRegion(x11->display, x11->window, ShapeInput, 0, 0,
+                            region, ShapeSet);
+        XDestroyRegion(region);
+    } else {
+        XShapeCombineMask(x11->display, x11->window, ShapeInput, 0, 0,
+                          0, ShapeSet);
+    }
 }
 
 int vo_x11_control(struct vo *vo, int *events, int request, void *arg)
@@ -2007,6 +2035,8 @@ int vo_x11_control(struct vo *vo, int *events, int request, void *arg)
                 vo_x11_minimize(vo);
             if (opt == &opts->window_maximized)
                 vo_x11_maximize(vo);
+            if (opt == &opts->cursor_passthrough)
+                vo_x11_set_input_region(vo, opts->cursor_passthrough);
             if (opt == &opts->x11_present)
                 xpresent_set(x11);
             if (opt == &opts->geometry || opt == &opts->autofit ||

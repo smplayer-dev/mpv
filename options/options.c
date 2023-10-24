@@ -38,6 +38,7 @@
 #include "m_config.h"
 #include "m_option.h"
 #include "common/common.h"
+#include "input/event.h"
 #include "stream/stream.h"
 #include "video/csputils.h"
 #include "video/hwdec.h"
@@ -62,6 +63,7 @@ extern const struct m_sub_options zimg_conf;
 extern const struct m_sub_options drm_conf;
 extern const struct m_sub_options demux_rawaudio_conf;
 extern const struct m_sub_options demux_rawvideo_conf;
+extern const struct m_sub_options demux_playlist_conf;
 extern const struct m_sub_options demux_lavf_conf;
 extern const struct m_sub_options demux_mkv_conf;
 extern const struct m_sub_options demux_cue_conf;
@@ -106,6 +108,8 @@ static const struct m_sub_options screenshot_conf = {
 static const m_option_t mp_vo_opt_list[] = {
     {"vo", OPT_SETTINGSLIST(video_driver_list, &vo_obj_list)},
     {"taskbar-progress", OPT_BOOL(taskbar_progress)},
+    {"drag-and-drop", OPT_CHOICE(drag_and_drop, {"no", -2}, {"auto", -1},
+        {"replace", DND_REPLACE}, {"append", DND_APPEND})},
     {"snap-window", OPT_BOOL(snap_window)},
     {"ontop", OPT_BOOL(ontop)},
     {"ontop-level", OPT_CHOICE(ontop_level, {"window", -1}, {"system", -2},
@@ -132,6 +136,7 @@ static const m_option_t mp_vo_opt_list[] = {
         M_RANGE(1.0/32.0, 32.0)},
     {"fullscreen", OPT_BOOL(fullscreen)},
     {"fs", OPT_ALIAS("fullscreen")},
+    {"input-cursor-passthrough", OPT_BOOL(cursor_passthrough)},
     {"native-keyrepeat", OPT_BOOL(native_keyrepeat)},
     {"panscan", OPT_FLOAT(panscan), M_RANGE(0.0, 1.0)},
     {"video-zoom", OPT_FLOAT(zoom), M_RANGE(-20.0, 20.0)},
@@ -196,6 +201,7 @@ const struct m_sub_options vo_sub_opts = {
     .size = sizeof(struct mp_vo_opts),
     .defaults = &(const struct mp_vo_opts){
         .video_driver_list = NULL,
+        .drag_and_drop = -1,
         .monitor_pixel_aspect = 1.0,
         .screen_id = -1,
         .fsscreen_id = -1,
@@ -515,6 +521,8 @@ static const m_option_t mp_opts[] = {
     {"vlang", OPT_STRINGLIST(stream_lang[STREAM_VIDEO])},
     {"track-auto-selection", OPT_BOOL(stream_auto_sel)},
     {"subs-with-matching-audio", OPT_BOOL(subs_with_matching_audio)},
+    {"subs-fallback", OPT_CHOICE(subs_fallback, {"no", 0}, {"default", 1}, {"yes", 2})},
+    {"subs-fallback-forced", OPT_BOOL(subs_fallback_forced)},
 
     {"lavfi-complex", OPT_STRING(lavfi_complex), .flags = UPDATE_LAVFI_COMPLEX},
 
@@ -584,6 +592,7 @@ static const m_option_t mp_opts[] = {
     {"", OPT_SUBSTRUCT(demux_lavf, demux_lavf_conf)},
     {"demuxer-rawaudio", OPT_SUBSTRUCT(demux_rawaudio, demux_rawaudio_conf)},
     {"demuxer-rawvideo", OPT_SUBSTRUCT(demux_rawvideo, demux_rawvideo_conf)},
+    {"", OPT_SUBSTRUCT(demux_playlist, demux_playlist_conf)},
     {"demuxer-mkv", OPT_SUBSTRUCT(demux_mkv, demux_mkv_conf)},
     {"demuxer-cue", OPT_SUBSTRUCT(demux_cue, demux_cue_conf)},
 
@@ -1027,8 +1036,12 @@ static const struct MPOpts mp_default_opts = {
                    { [STREAM_AUDIO] = -2,
                      [STREAM_VIDEO] = -2,
                      [STREAM_SUB] = -2, }, },
+    .stream_lang = {
+        [STREAM_SUB] = (char *[]){ "auto", NULL },
+    },
     .stream_auto_sel = true,
-    .subs_with_matching_audio = true,
+    .subs_with_matching_audio = false,
+    .subs_fallback_forced = true,
     .audio_display = 1,
     .audio_output_format = 0,  // AF_FORMAT_UNKNOWN
     .playback_speed = 1.,
@@ -1048,7 +1061,7 @@ static const struct MPOpts mp_default_opts = {
 
     .mf_fps = 1.0,
 
-    .display_tags = (char **)(const char*[]){
+    .display_tags = (char *[]){
         "Artist", "Album", "Album_Artist", "Comment", "Composer",
         "Date", "Description", "Genre", "Performer", "Rating",
         "Series", "Title", "Track", "icy-title", "service_name",
@@ -1058,7 +1071,7 @@ static const struct MPOpts mp_default_opts = {
 
     .cuda_device = -1,
 
-    .watch_later_options = (char **)(const char*[]){
+    .watch_later_options = (char *[]){
         "start",
         "osd-level",
         "speed",

@@ -412,6 +412,10 @@ iconv support use --disable-iconv.",
         'desc': 'JPEG XL support via libavcodec',
         'func': check_pkg_config('libavcodec >= 59.27.100'),
     }, {
+        'name': 'avif_muxer',
+        'desc': 'avif support via libavcodec',
+        'func': check_pkg_config('libavformat >= 59.24.100'),
+    }, {
         'name': 'rubberband-3',
         'desc': 'new engine support for librubberband',
         'func': check_pkg_config('rubberband >= 3.0.0'),
@@ -541,14 +545,9 @@ video_output_features = [
         'name': '--wayland',
         'desc': 'Wayland',
         'deps': 'wayland-protocols && wayland-scanner && linux-input-event-codes',
-        'func': check_pkg_config('wayland-client', '>= 1.15.0',
-                                 'wayland-cursor', '>= 1.15.0',
+        'func': check_pkg_config('wayland-client', '>= 1.20.0',
+                                 'wayland-cursor', '>= 1.20.0',
                                  'xkbcommon',      '>= 0.3.0'),
-    } , {
-        'name': 'wayland-protocols-1-24',
-        'desc': 'wayland-protocols version 1.24+',
-        'deps': 'wayland',
-        'func': check_pkg_config('wayland-protocols >= 1.24'),
     } , {
         'name': 'wayland-protocols-1-27',
         'desc': 'wayland-protocols version 1.27+',
@@ -560,11 +559,21 @@ video_output_features = [
         'deps': 'wayland',
         'func': check_pkg_config('wayland-protocols >= 1.31'),
     } , {
+        'name': 'wayland-protocols-1-32',
+        'desc': 'wayland-protocols version 1.32+',
+        'deps': 'wayland',
+        'func': check_pkg_config('wayland-protocols >= 1.32'),
+    } , {
         'name': 'memfd_create',
         'desc': "Linux's memfd_create()",
         'deps': 'wayland',
         'func': check_statement('sys/mman.h',
                                 'memfd_create("mpv", MFD_CLOEXEC | MFD_ALLOW_SEALING)')
+    }, {
+        'name': '--dmabuf-wayland',
+        'desc': 'dmabuf-wayland video output',
+        'deps': 'wayland && memfd_create && drm',
+        'func': check_true,
     } , {
         'name': '--x11',
         'desc': 'X11',
@@ -693,11 +702,6 @@ video_output_features = [
         'deps': 'vaapi && gl-wayland',
         'func': check_pkg_config('libva-wayland', '>= 1.1.0'),
     }, {
-        'name': 'dmabuf-wayland',
-        'desc': 'Wayland dmabuf support',
-        'deps': 'wayland && memfd_create && (vaapi-wayland || drm)',
-        'func': check_true,
-    }, {
         'name': '--vaapi-drm',
         'desc': 'VAAPI (DRM/EGL support)',
         'deps': 'vaapi && egl-drm',
@@ -793,9 +797,15 @@ video_output_features = [
         'func': check_pkg_config('libplacebo >= 4.157.0'),
     }, {
         'name': '--libplacebo-next',
-        'desc': 'libplacebo v5.264.0+, needed for vo_gpu_next',
+        'desc': 'libplacebo v5.266.0+, needed for vo_gpu_next',
         'deps': 'libplacebo',
-        'func': check_preprocessor('libplacebo/config.h', 'PL_API_VER >= 264',
+        'func': check_preprocessor('libplacebo/config.h', 'PL_API_VER >= 266',
+                                   use='libplacebo'),
+    }, {
+        'name': 'libplacebo-decode',
+        'desc': 'libplacebo v6.278.0+, needed for Vulkan video decode',
+        'deps': 'libplacebo',
+        'func': check_preprocessor('libplacebo/config.h', 'PL_API_VER >= 278',
                                    use='libplacebo'),
     }, {
         'name': '--vulkan',
@@ -808,6 +818,16 @@ video_output_features = [
         'deps': 'vulkan',
         'func': check_statement('vulkan/vulkan_core.h', 'vkCreateDisplayPlaneSurfaceKHR(0, 0, 0, 0)',
                                 use='vulkan')
+    }, {
+        'name': 'vulkan-decode-headers',
+        'desc': 'Vulkan headers with decode support',
+        'deps': 'vulkan',
+        'func': check_pkg_config('vulkan', '>= 1.3.238'),
+    }, {
+        'name': '--vulkan-interop',
+        'desc': 'Vulkan graphics interop',
+        'deps': 'vulkan-decode-headers && libplacebo-decode',
+        'func': check_pkg_config('libavutil', '>= 58.11.100'),
     }, {
         'name': 'vaapi-libplacebo',
         'desc': 'VAAPI libplacebo',
@@ -876,7 +896,7 @@ hwaccel_features = [
     }, {
         'name': 'ffnvcodec',
         'desc': 'CUDA Headers and dynamic loader',
-        'func': check_pkg_config('ffnvcodec >= 8.2.15.7'),
+        'func': check_pkg_config('ffnvcodec >= 11.1.5.1'),
     }, {
         'name': '--cuda-hwaccel',
         'desc': 'CUDA acceleration',

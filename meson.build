@@ -43,6 +43,7 @@ features = {
     'ffmpeg': true,
     'gpl': get_option('gpl'),
     'jpegxl': libavformat.version().version_compare('>= 59.27.100'),
+    'avif_muxer': libavformat.version().version_compare('>= 59.24.100'),
     'libass': true,
     'threads': true,
 }
@@ -131,6 +132,7 @@ sources = files(
     'misc/charset_conv.c',
     'misc/dispatch.c',
     'misc/json.c',
+    'misc/language.c',
     'misc/natural_sort.c',
     'misc/node.c',
     'misc/random.c',
@@ -383,7 +385,9 @@ cocoa = dependency('appleframeworks', modules: ['Cocoa', 'IOKit', 'QuartzCore'],
 features += {'cocoa': cocoa.found()}
 if features['cocoa']
     dependencies += cocoa
-    sources += files('osdep/macosx_application.m',
+    sources += files('osdep/apple_utils.c',
+                     'osdep/language-apple.c',
+                     'osdep/macosx_application.m',
                      'osdep/macosx_events.m',
                      'osdep/macosx_menubar.m',
                      'osdep/main-fn-cocoa.c',
@@ -405,13 +409,14 @@ if posix
 endif
 
 if posix and not features['cocoa']
-    sources += files('osdep/main-fn-unix.c')
+    sources += files('osdep/main-fn-unix.c',
+                     'osdep/language-posix.c')
 endif
 
 if darwin
     path_source = files('osdep/path-darwin.c')
     sources += path_source + files('osdep/timer-darwin.c')
-                     
+
 endif
 
 if posix and not darwin
@@ -490,6 +495,7 @@ if features['win32-desktop']
     subprocess_source = files('osdep/subprocess-win.c')
     sources += path_source + subprocess_source + \
                files('input/ipc-win.c',
+                     'osdep/language-win.c',
                      'osdep/main-fn-win.c',
                      'osdep/terminal-win.c',
                      'video/out/w32_common.c',
@@ -826,7 +832,7 @@ if features['oss-audio']
     sources += files('audio/out/ao_oss.c')
 endif
 
-pipewire = dependency('libpipewire-0.3', version: '>= 0.3.19', required: get_option('pipewire'))
+pipewire = dependency('libpipewire-0.3', version: '>= 0.3.48', required: get_option('pipewire'))
 features += {'pipewire': pipewire.found()}
 if features['pipewire']
     dependencies += pipewire
@@ -978,9 +984,9 @@ if features['d3d11']
 endif
 
 wayland = {
-    'deps': [dependency('wayland-client', version: '>= 1.15.0', required: get_option('wayland')),
-             dependency('wayland-cursor', version: '>= 1.15.0', required: get_option('wayland')),
-             dependency('wayland-protocols', version: '>= 1.15', required: get_option('wayland')),
+    'deps': [dependency('wayland-client', version: '>= 1.20.0', required: get_option('wayland')),
+             dependency('wayland-cursor', version: '>= 1.20.0', required: get_option('wayland')),
+             dependency('wayland-protocols', version: '>= 1.25', required: get_option('wayland')),
              dependency('xkbcommon', version: '>= 0.3.0', required: get_option('wayland'))],
     'header': cc.has_header('linux/input-event-codes.h', required: get_option('wayland')),
     'scanner': find_program('wayland-scanner', required: get_option('wayland')),
@@ -1005,6 +1011,18 @@ if features['wayland']
 endif
 if features['wayland'] and features['memfd_create']
     sources += files('video/out/vo_wlshm.c')
+endif
+
+dmabuf_wayland = get_option('dmabuf-wayland').require(
+    features['drm'] and features['memfd_create'] and features['wayland'],
+    error_message: 'drm, memfd_create, or wayland was not found!',
+)
+features += {'dmabuf-wayland': dmabuf_wayland.allowed()}
+if features['dmabuf-wayland']
+    sources += files('video/out/vo_dmabuf_wayland.c')
+    sources += files('video/out/hwdec/dmabuf_interop_wl.c')
+    sources += files('video/out/wldmabuf/context_wldmabuf.c')
+    sources += files('video/out/wldmabuf/ra_wldmabuf.c')
 endif
 
 x11_opt = get_option('x11').require(
@@ -1272,7 +1290,7 @@ endif
 
 
 # hwaccel
-ffnvcodec = dependency('ffnvcodec', version: '>= 8.2.15.7', required: false)
+ffnvcodec = dependency('ffnvcodec', version: '>= 11.1.5.1', required: false)
 features += {'ffnvcodec': ffnvcodec.found()}
 if features['ffnvcodec']
     dependencies += ffnvcodec
@@ -1307,6 +1325,17 @@ if features['cuda-interop'] and features['gl']
 endif
 if features['cuda-interop'] and features['vulkan']
     sources += files('video/out/hwdec/hwdec_cuda_vk.c')
+endif
+
+vulkan_interop = get_option('vulkan-interop').require(
+    features['vulkan'] and vulkan.version().version_compare('>=1.3.238') and
+    features['libplacebo'] and libplacebo.version().version_compare('>=6.278.0') and
+    libavutil.version().version_compare('>=58.11.100'),
+    error_message: 'Vulkan Interop requires vulkan headers >= 1.3.238, libplacebo >= 6.278.0, and libavutil >= 58.11.100',
+)
+features += {'vulkan-interop': vulkan_interop.allowed()}
+if vulkan_interop.allowed()
+    sources += files('video/out/hwdec/hwdec_vulkan.c')
 endif
 
 d3d_hwaccel = get_option('d3d-hwaccel').require(
@@ -1412,15 +1441,6 @@ dmabuf_interop_pl = features['vaapi-libplacebo']
 features += {'dmabuf-interop-pl': dmabuf_interop_pl}
 if features['dmabuf-interop-pl']
     sources += files('video/out/hwdec/dmabuf_interop_pl.c')
-endif
-
-features += {'dmabuf-wayland' : features['wayland'] and features['memfd_create'] and (features['vaapi-wayland'] or features['drm'])}
-if features['dmabuf-wayland']
-    sources += files('video/out/vo_dmabuf_wayland.c')
-    sources += files('video/out/hwdec/dmabuf_interop_wl.c')
-    sources += files('video/out/wldmabuf/context_wldmabuf.c')
-    sources += files('video/out/wldmabuf/ra_wldmabuf.c')
-    sources += files('video/out/wlbuf_pool.c')
 endif
 
 vdpau_opt = get_option('vdpau').require(

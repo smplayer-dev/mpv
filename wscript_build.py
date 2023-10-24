@@ -163,6 +163,20 @@ def build(ctx):
             protocol  = "staging/fractional-scale/fractional-scale-v1",
             target    = "generated/wayland/fractional-scale-v1.h")
 
+    if ctx.dependency_satisfied('wayland-protocols-1-32'):
+        ctx.wayland_protocol_code(proto_dir = ctx.env.WL_PROTO_DIR,
+            protocol  = "staging/cursor-shape/cursor-shape-v1",
+            target    = "generated/wayland/cursor-shape-v1.c")
+        ctx.wayland_protocol_header(proto_dir = ctx.env.WL_PROTO_DIR,
+            protocol  = "staging/cursor-shape/cursor-shape-v1",
+            target    = "generated/wayland/cursor-shape-v1.h")
+        ctx.wayland_protocol_code(proto_dir = ctx.env.WL_PROTO_DIR,
+            protocol  = "unstable/tablet/tablet-unstable-v2",
+            target    = "generated/wayland/tablet-unstable-v2.c")
+        ctx.wayland_protocol_header(proto_dir = ctx.env.WL_PROTO_DIR,
+            protocol  = "unstable/tablet/tablet-unstable-v2",
+            target    = "generated/wayland/tablet-unstable-v2.h")
+
     ctx(features = "ebml_header", target = "generated/ebml_types.h")
     ctx(features = "ebml_definitions", target = "generated/ebml_defs.inc")
 
@@ -247,6 +261,12 @@ def build(ctx):
         ( "osdep/subprocess-posix.c",            "posix" ),
         ( "osdep/subprocess-win.c",              "win32-desktop" ),
         ( "osdep/subprocess-dummy.c" ),
+    ])
+
+    language_c = ctx.pick_first_matching_dep([
+        ( "osdep/language-apple.c",              "cocoa" ),
+        ( "osdep/language-win.c",                "win32-desktop" ),
+        ( "osdep/language-posix.c" ),
     ])
 
     sources = [
@@ -355,6 +375,7 @@ def build(ctx):
         ( "misc/dispatch.c" ),
         ( "misc/jni.c",                          "android" ),
         ( "misc/json.c" ),
+        ( "misc/language.c" ),
         ( "misc/natural_sort.c" ),
         ( "misc/node.c" ),
         ( "misc/rendezvous.c" ),
@@ -486,6 +507,7 @@ def build(ctx):
         ( "video/out/hwdec/hwdec_drmprime.c",    "drm" ),
         ( "video/out/hwdec/hwdec_drmprime_overlay.c","drm" ),
         ( "video/out/hwdec/hwdec_vaapi.c",       "vaapi-egl || vaapi-libplacebo" ),
+        ( "video/out/hwdec/hwdec_vulkan.c",      "vulkan-interop" ),
         ( "video/out/hwdec/dmabuf_interop_gl.c", "dmabuf-interop-gl" ),
         ( "video/out/hwdec/dmabuf_interop_pl.c", "dmabuf-interop-pl" ),
         ( "video/out/hwdec/dmabuf_interop_wl.c", "dmabuf-wayland" ),
@@ -520,7 +542,6 @@ def build(ctx):
         ( "video/out/present_sync.c",            "wayland || x11" ),
         ( "video/out/wldmabuf/context_wldmabuf.c", "dmabuf-wayland" ),
         ( "video/out/wldmabuf/ra_wldmabuf.c",      "dmabuf-wayland" ),
-        ( "video/out/wlbuf_pool.c",                "dmabuf-wayland" ),
         ( "video/out/vo.c" ),
         ( "video/out/vo_caca.c",                 "caca" ),
         ( "video/out/vo_direct3d.c",             "direct3d" ),
@@ -554,6 +575,8 @@ def build(ctx):
         ( "generated/wayland/single-pixel-buffer-v1.c", "wayland-protocols-1-27" ),
         ( "generated/wayland/content-type-v1.c", "wayland-protocols-1-27" ),
         ( "generated/wayland/fractional-scale-v1.c", "wayland-protocols-1-31"),
+        ( "generated/wayland/cursor-shape-v1.c", "wayland-protocols-1-32"),
+        ( "generated/wayland/tablet-unstable-v2.c", "wayland-protocols-1-32"),
         ( "generated/wayland/idle-inhibit-unstable-v1.c", "wayland" ),
         ( "generated/wayland/presentation-time.c", "wayland" ),
         ( "generated/wayland/xdg-decoration-unstable-v1.c", "wayland" ),
@@ -580,7 +603,10 @@ def build(ctx):
         ( timer_c ),
         ( "osdep/polldev.c",                     "posix" ),
 
+        ( language_c ),
+
         ( "osdep/android/strnlen.c",             "android"),
+        ( "osdep/apple_utils.c",                 "cocoa" ),
         ( "osdep/glob-win.c",                    "glob-win32" ),
         ( "osdep/macosx_application.m",          "cocoa" ),
         ( "osdep/macosx_events.m",               "cocoa" ),

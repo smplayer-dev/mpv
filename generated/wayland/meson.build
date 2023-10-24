@@ -8,8 +8,6 @@ protocols = [[wl_protocol_dir, 'stable/presentation-time/presentation-time.xml']
 wl_protocols_source = []
 wl_protocols_headers = []
 
-features += {'wayland_protocols_1_24': wayland['deps'][2].version().version_compare('>=1.24')}
-
 features += {'wayland_protocols_1_27': wayland['deps'][2].version().version_compare('>=1.27')}
 if features['wayland_protocols_1_27']
     protocols += [[wl_protocol_dir, 'staging/content-type/content-type-v1.xml'],
@@ -19,6 +17,12 @@ endif
 features += {'wayland_protocols_1_31': wayland['deps'][2].version().version_compare('>=1.31')}
 if features['wayland_protocols_1_31']
     protocols += [[wl_protocol_dir, 'staging/fractional-scale/fractional-scale-v1.xml']]
+endif
+
+features += {'wayland_protocols_1_32': wayland['deps'][2].version().version_compare('>=1.32')}
+if features['wayland_protocols_1_32']
+    protocols += [[wl_protocol_dir, 'staging/cursor-shape/cursor-shape-v1.xml'],
+                  [wl_protocol_dir, 'unstable/tablet/tablet-unstable-v2.xml']] # required by cursor-shape
 endif
 
 foreach p: protocols

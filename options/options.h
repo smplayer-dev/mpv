@@ -11,6 +11,7 @@ typedef struct mp_vo_opts {
 
     bool taskbar_progress;
     bool snap_window;
+    int drag_and_drop;
     bool ontop;
     int ontop_level;
     bool fullscreen;
@@ -31,6 +32,7 @@ typedef struct mp_vo_opts {
     int x11_netwm;
     int x11_bypass_compositor;
     int x11_present;
+    bool cursor_passthrough;
     bool native_keyrepeat;
 
     float panscan;
@@ -81,7 +83,6 @@ struct mp_subtitle_opts {
     float sub_fps;
     float sub_speed;
     int forced_subs_only;
-    int forced_subs_only_current;
     bool stretch_dvd_subs;
     bool stretch_image_subs;
     bool image_subs_video_res;
@@ -265,6 +266,8 @@ typedef struct MPOpts {
     char **stream_lang[STREAM_TYPE_COUNT];
     bool stream_auto_sel;
     bool subs_with_matching_audio;
+    int subs_fallback;
+    bool subs_fallback_forced;
     int audio_display;
     char **display_tags;
 
@@ -323,6 +326,7 @@ typedef struct MPOpts {
 
     struct demux_rawaudio_opts *demux_rawaudio;
     struct demux_rawvideo_opts *demux_rawvideo;
+    struct demux_playlist_opts *demux_playlist;
     struct demux_lavf_opts *demux_lavf;
     struct demux_mkv_opts *demux_mkv;
     struct demux_cue_opts *demux_cue;

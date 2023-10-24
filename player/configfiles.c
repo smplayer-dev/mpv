@@ -292,13 +292,15 @@ void mp_write_watch_later_conf(struct MPContext *mpctx)
         goto exit;
 
     char *wl_dir = mp_get_playback_resume_dir(mpctx);
-    mp_mk_user_dir(mpctx->global, "state", wl_dir);
+    mp_mkdirp(wl_dir);
 
     MP_INFO(mpctx, "Saving state.\n");
 
     FILE *file = fopen(conffile, "wb");
-    if (!file)
+    if (!file) {
+        MP_WARN(mpctx, "Can't open %s for writing\n", conffile);
         goto exit;
+    }
 
     write_filename(mpctx, file, cur->filename);
 
@@ -394,17 +396,18 @@ void mp_delete_watch_later_conf(struct MPContext *mpctx, const char *file)
     talloc_free(fname);
 }
 
-void mp_load_playback_resume(struct MPContext *mpctx, const char *file)
+bool mp_load_playback_resume(struct MPContext *mpctx, const char *file)
 {
+    bool resume = false;
     if (!mpctx->opts->position_resume)
-        return;
+        return resume;
     char *fname = mp_get_playback_resume_config_filename(mpctx, file);
     if (fname && mp_path_exists(fname)) {
         if (mpctx->opts->position_check_mtime &&
             !mp_is_url(bstr0(file)) && !check_mtime(file, fname))
         {
             talloc_free(fname);
-            return;
+            return resume;
         }
 
         // Never apply the saved start position to following files
@@ -412,9 +415,10 @@ void mp_load_playback_resume(struct MPContext *mpctx, const char *file)
         MP_INFO(mpctx, "Resuming playback. This behavior can "
                "be disabled with --no-resume-playback.\n");
         try_load_config(mpctx, fname, M_SETOPT_PRESERVE_CMDLINE, MSGL_V);
-        unlink(fname);
+        resume = true;
     }
     talloc_free(fname);
+    return resume;
 }
 
 // Returns the first file that has a resume config.

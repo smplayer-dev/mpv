@@ -18,6 +18,7 @@
  */
 
 #include <pthread.h>
+#include <libplacebo/colorspace.h>
 #include <libplacebo/renderer.h>
 #include <libplacebo/shaders/lut.h>
 #include <libplacebo/utils/libav.h>
@@ -150,6 +151,8 @@ struct priv {
     bool delayed_peak;
     bool inter_preserve;
     bool target_hint;
+
+    float corner_rounding;
 };
 
 static void update_render_options(struct vo *vo);
@@ -744,7 +747,7 @@ static void info_callback(void *priv, const struct pl_render_info *info)
 {
     struct vo *vo = priv;
     struct priv *p = vo->priv;
-    if (info->index > VO_PASS_PERF_MAX)
+    if (info->index >= VO_PASS_PERF_MAX)
         return; // silently ignore clipped passes, whatever
 
     struct mp_frame_perf *frame;
@@ -758,14 +761,16 @@ static void info_callback(void *priv, const struct pl_render_info *info)
     struct mp_pass_perf *perf = &frame->perf[index];
     const struct pl_dispatch_info *pass = info->pass;
     static_assert(VO_PERF_SAMPLE_COUNT >= MP_ARRAY_SIZE(pass->samples), "");
-    memcpy(perf->samples, pass->samples, pass->num_samples * sizeof(pass->samples[0]));
-    perf->count = pass->num_samples;
+    assert(pass->num_samples <= MP_ARRAY_SIZE(pass->samples));
+
+    perf->count = MPMIN(pass->num_samples, VO_PERF_SAMPLE_COUNT);
+    memcpy(perf->samples, pass->samples, perf->count * sizeof(pass->samples[0]));
     perf->last = pass->last;
     perf->peak = pass->peak;
     perf->avg = pass->average;
 
-    talloc_free(frame->desc[index]);
-    frame->desc[index] = talloc_strdup(p, pass->shader->description);
+    strncpy(frame->desc[index], pass->shader->description, sizeof(frame->desc[index]) - 1);
+    frame->desc[index][sizeof(frame->desc[index]) - 1] = '\0';
     frame->count = index + 1;
 }
 
@@ -791,6 +796,32 @@ static void update_options(struct vo *vo)
     p->output_levels = cparams.levels_out;
 }
 
+static void apply_target_contrast(struct priv *p, struct pl_color_space *color)
+{
+    const struct gl_video_opts *opts = p->opts_cache->opts;
+
+    // Auto mode, leave as is
+    if (!opts->target_contrast)
+        return;
+
+    // Infinite contrast
+    if (opts->target_contrast == -1) {
+        color->hdr.max_luma = 1e-7;
+        return;
+    }
+
+    // Infer max_luma for current pl_color_space
+    pl_color_space_nominal_luma_ex(pl_nominal_luma_params(
+        .color = color,
+        // with HDR10 meta to respect value if already set
+        .metadata = PL_HDR_METADATA_HDR10,
+        .scaling = PL_HDR_NITS,
+        .out_max = &color->hdr.max_luma
+    ));
+
+    color->hdr.min_luma = color->hdr.max_luma / opts->target_contrast;
+}
+
 static void apply_target_options(struct priv *p, struct pl_frame *target)
 {
 
@@ -809,6 +840,8 @@ static void apply_target_options(struct priv *p, struct pl_frame *target)
     // If swapchain returned a value use this, override is used in hint
     if (opts->target_peak && !target->color.hdr.max_luma)
         target->color.hdr.max_luma = opts->target_peak;
+    if (!target->color.hdr.min_luma)
+        apply_target_contrast(p, &target->color);
     if (opts->dither_depth > 0) {
         struct pl_bit_encoding *tbits = &target->repr.bits;
         tbits->color_depth += opts->dither_depth - tbits->sample_depth;
@@ -900,6 +933,7 @@ static void draw_frame(struct vo *vo, struct vo_frame *frame)
             hint.transfer = mp_trc_to_pl(opts->target_trc);
         if (opts->target_peak)
             hint.hdr.max_luma = opts->target_peak;
+        apply_target_contrast(p, &hint);
         pl_swapchain_colorspace_hint(p->sw, &hint);
     } else if (!p->target_hint) {
         pl_swapchain_colorspace_hint(p->sw, NULL);
@@ -1357,9 +1391,10 @@ static void wait_events(struct vo *vo, int64_t until_time_us)
 
 static char *get_cache_file(struct priv *p)
 {
+    char *file = NULL;
     struct gl_video_opts *opts = p->opts_cache->opts;
     if (!opts->shader_cache)
-        return NULL;
+        goto done;
 
     char *dir = opts->shader_cache_dir;
     if (dir && dir[0]) {
@@ -1367,9 +1402,12 @@ static char *get_cache_file(struct priv *p)
     } else {
         dir = mp_find_user_file(NULL, p->global, "cache", "");
     }
-    char *file = mp_path_join(NULL, dir, "libplacebo.cache");
-    mp_mkdirp(dir);
+    if (dir && dir[0]) {
+        file = mp_path_join(NULL, dir, "libplacebo.cache");
+        mp_mkdirp(dir);
+    }
     talloc_free(dir);
+done:
     return file;
 }
 
@@ -1442,7 +1480,7 @@ static int preinit(struct vo *vo)
     p->hwdec_ctx = (struct ra_hwdec_ctx) {
         .log = p->log,
         .global = p->global,
-        .ra = p->ra_ctx->ra,
+        .ra_ctx = p->ra_ctx,
     };
 
     vo->hwdec_devs = hwdec_devices_create();
@@ -1606,8 +1644,11 @@ static stream_t *icc_open_cache(struct priv *p, uint64_t sig, int flags)
     } else {
         cache_dir = mp_find_user_file(NULL, p->global, "cache", "");
     }
-    char *path = mp_path_join(NULL, cache_dir, cache_name);
 
+    if (!cache_dir || !cache_dir[0])
+        return NULL;
+
+    char *path = mp_path_join(NULL, cache_dir, cache_name);
     stream_t *stream = NULL;
     if (flags & STREAM_WRITE) {
         mp_mkdirp(cache_dir);
@@ -1803,6 +1844,9 @@ static void update_render_options(struct vo *vo)
     p->params.disable_linear_scaling = !opts->linear_downscaling && !opts->linear_upscaling;
     p->params.disable_fbos = opts->dumb_mode == 1;
     p->params.blend_against_tiles = opts->alpha_mode == ALPHA_BLEND_TILES;
+#if PL_API_VER >= 277
+    p->params.corner_rounding = p->corner_rounding;
+#endif
 
     // Map scaler options as best we can
     p->params.upscaler = map_scaler(p, SCALER_SCALE);
@@ -1847,11 +1891,38 @@ static void update_render_options(struct vo *vo)
         [TONE_MAPPING_ST2094_10] = &pl_tone_map_st2094_10,
     };
 
+#if PL_API_VER >= 269
+    const struct pl_gamut_map_function *gamut_modes[] = {
+        [GAMUT_CLIP]            = &pl_gamut_map_clip,
+        [GAMUT_PERCEPTUAL]      = &pl_gamut_map_perceptual,
+        [GAMUT_RELATIVE]        = &pl_gamut_map_relative,
+        [GAMUT_SATURATION]      = &pl_gamut_map_saturation,
+        [GAMUT_ABSOLUTE]        = &pl_gamut_map_absolute,
+        [GAMUT_DESATURATE]      = &pl_gamut_map_desaturate,
+        [GAMUT_DARKEN]          = &pl_gamut_map_darken,
+        [GAMUT_WARN]            = &pl_gamut_map_highlight,
+        [GAMUT_LINEAR]          = &pl_gamut_map_linear,
+    };
+
+    // Back-compat approximation, taken from libplacebo source code
+    static const float hybrid_mix[] = {
+        [TONE_MAP_MODE_RGB]     = 1.0f,
+        [TONE_MAP_MODE_MAX]     = 0.0f,
+        [TONE_MAP_MODE_LUMA]    = 0.0f,
+        [TONE_MAP_MODE_HYBRID]  = 0.20f,
+    };
+#else
     static const enum pl_gamut_mode gamut_modes[] = {
         [GAMUT_CLIP]            = PL_GAMUT_CLIP,
         [GAMUT_WARN]            = PL_GAMUT_WARN,
         [GAMUT_DESATURATE]      = PL_GAMUT_DESATURATE,
         [GAMUT_DARKEN]          = PL_GAMUT_DARKEN,
+        // Unsupported
+        [GAMUT_PERCEPTUAL]      = PL_GAMUT_CLIP,
+        [GAMUT_RELATIVE]        = PL_GAMUT_CLIP,
+        [GAMUT_SATURATION]      = PL_GAMUT_CLIP,
+        [GAMUT_ABSOLUTE]        = PL_GAMUT_CLIP,
+        [GAMUT_LINEAR]          = PL_GAMUT_CLIP,
     };
 
     static const enum pl_tone_map_mode tone_map_modes[] = {
@@ -1861,19 +1932,32 @@ static void update_render_options(struct vo *vo)
         [TONE_MAP_MODE_HYBRID]  = PL_TONE_MAP_HYBRID,
         [TONE_MAP_MODE_LUMA]    = PL_TONE_MAP_LUMA,
     };
+#endif
 
     p->color_map = pl_color_map_default_params;
-    p->color_map.intent = opts->icc_opts->intent;
     p->color_map.tone_mapping_function = tone_map_funs[opts->tone_map.curve];
     p->color_map.tone_mapping_param = opts->tone_map.curve_param;
     p->color_map.inverse_tone_mapping = opts->tone_map.inverse;
-    p->color_map.tone_mapping_crosstalk = opts->tone_map.crosstalk;
-    p->color_map.tone_mapping_mode = tone_map_modes[opts->tone_map.mode];
     if (isnan(p->color_map.tone_mapping_param)) // vo_gpu compatibility
         p->color_map.tone_mapping_param = 0.0;
+    p->color_map.visualize_lut = opts->tone_map.visualize;
+
+#if PL_API_VER >= 285
+    p->color_map.contrast_recovery = opts->tone_map.contrast_recovery;
+    p->color_map.contrast_smoothness = opts->tone_map.contrast_smoothness;
+#endif
+
+#if PL_API_VER >= 269
+    if (opts->tone_map.gamut_mode != GAMUT_AUTO)
+        p->color_map.gamut_mapping = gamut_modes[opts->tone_map.gamut_mode];
+    if (opts->tone_map.mode != TONE_MAP_MODE_AUTO)
+        p->color_map.hybrid_mix = hybrid_mix[opts->tone_map.mode];
+#else
+    p->color_map.intent = opts->icc_opts->intent;
+    p->color_map.tone_mapping_mode = tone_map_modes[opts->tone_map.mode];
     if (opts->tone_map.gamut_mode != GAMUT_AUTO)
         p->color_map.gamut_mode = gamut_modes[opts->tone_map.gamut_mode];
-    p->color_map.visualize_lut = opts->tone_map.visualize;
+#endif
 
     switch (opts->dither_algo) {
     case DITHER_NONE:
@@ -1951,6 +2035,7 @@ const struct vo_driver video_out_gpu_next = {
 
     .options = (const struct m_option[]) {
         {"allow-delayed-peak-detect", OPT_BOOL(delayed_peak)},
+        {"corner-rounding", OPT_FLOAT(corner_rounding), M_RANGE(0, 1)},
         {"interpolation-preserve", OPT_BOOL(inter_preserve)},
         {"lut", OPT_STRING(lut.opt), .flags = M_OPT_FILE},
         {"lut-type", OPT_CHOICE_C(lut.type, lut_types)},

@@ -5,10 +5,14 @@ Track Selection
 ---------------
 
 ``--alang=<languagecode[,languagecode,...]>``
-    Specify a priority list of audio languages to use. Different container
-    formats employ different language codes. DVDs use ISO 639-1 two-letter
-    language codes, Matroska, MPEG-TS and NUT use ISO 639-2 three-letter
-    language codes, while OGM uses a free-form identifier. See also ``--aid``.
+    Specify a priority list of audio languages to use, as IETF language tags.
+    Equivalent ISO 639-1 two-letter and ISO 639-2 three-letter codes are treated the same.
+    The first tag in the list whose language matches a track in the file will be used.
+    A track that matches more subtags will be preferred over one that matches fewer,
+    with preference given to earlier subtags over later ones. See also ``--aid``.
+
+    The special value "auto" can be included anywhere in the list,
+    and is equivalent to the user's OS-level list of preferred languages.
 
     This is a string list option. See `List Options`_ for details.
 
@@ -20,10 +24,7 @@ Track Selection
           audio.
 
 ``--slang=<languagecode[,languagecode,...]>``
-    Specify a priority list of subtitle languages to use. Different container
-    formats employ different language codes. DVDs use ISO 639-1 two letter
-    language codes, Matroska uses ISO 639-2 three letter language codes while
-    OGM uses a free-form identifier. See also ``--sid``.
+    Equivalent to ``--alang``, for subtitle tracks (default: auto).
 
     This is a string list option. See `List Options`_ for details.
 
@@ -33,6 +34,8 @@ Track Selection
           a DVD and falls back on English if Hungarian is not available.
         - ``mpv --slang=jpn example.mkv`` plays a Matroska file with Japanese
           subtitles.
+        - ``mpv --slang=pt-BR example.mkv`` plays a Matroska file with Brazilian
+          Portuguese subtitles if available, and otherwise any Portuguese subtitles.
 
 ``--vlang=<...>``
     Equivalent to ``--alang`` and ``--slang``, for video tracks.
@@ -136,9 +139,17 @@ Track Selection
     referenced tracks are always selected.
 
 ``--subs-with-matching-audio=<yes|no>``
-    When autoselecting a subtitle track, select a non-forced one even if the selected
-    audio stream matches your preferred subtitle language (default: yes). Disable this
-    if you'd like to only show subtitles for foreign audio or onscreen text.
+    When autoselecting a subtitle track, select a full/non-forced one even if the selected
+    audio stream matches your preferred subtitle language (default: no).
+
+``--subs-fallback=<yes|default|no>``
+    When autoselecting a subtitle track, if no tracks match your preferred languages,
+    select a full track even if it doesn't match your preferred subtitle language (default: no).
+    Setting this to `default` means that only streams flagged as `default` will be selected.
+
+``--subs-fallback-forced=<yes|no>``
+    When autoselecting a subtitle track, if no tracks match your preferred languages,
+    select a forced track that matches the language of the selected audio track (default: yes).
 
 
 Playback Control
@@ -708,9 +719,9 @@ Program Behavior
     Print version string and exit.
 
 ``--no-config``
-    Do not load default configuration files. This prevents loading of both the
-    user-level and system-wide ``mpv.conf`` and ``input.conf`` files. Other
-    configuration files are blocked as well, such as resume playback files.
+    Do not load default configuration or any user files. This prevents loading of
+    both the user-level and system-wide ``mpv.conf`` and ``input.conf`` files. Other
+    user files are blocked as well, such as resume playback files and cache files.
 
     .. note::
 
@@ -1174,7 +1185,7 @@ Video
 ``--display-fps=<fps>``
     Deprecated alias for ``--override-display-fps``.
 
-``--hwdec=<api>``
+``--hwdec=<api1,api2,...|no|auto|auto-safe|auto-copy>``
     Specify the hardware video decoding API that should be used if possible.
     Whether hardware decoding is actually done depends on the video codec. If
     hardware decoding is not possible, mpv will fall back on software decoding.
@@ -1189,7 +1200,7 @@ Video
     .. note::
 
         Use the ``Ctrl+h`` shortcut to toggle hardware decoding at runtime. It
-        toggles this option between ``auto`` and ``no``.
+        toggles this option between ``auto-safe`` and ``no``.
 
         If you decide you want to use hardware decoding by default, the general
         recommendation is to try out decoding with the command line option, and
@@ -1233,13 +1244,20 @@ Video
         - If you're a developer, or want to perform elaborate tests, you may
           need any of the other possible option values.
 
-    ``<api>`` can be one of the following:
+    This option accepts a comma delimited list of ``api`` types, along with certain
+    special values:
 
     :no:        always use software decoding (default)
-    :auto:      forcibly enable any hw decoder found (see below)
-    :yes:       exactly the same as ``auto``
     :auto-safe: enable any whitelisted hw decoder (see below)
+    :auto:      forcibly enable any hw decoder found (see below)
+    :yes:       exactly the same as ``auto-safe``
     :auto-copy: enable best hw decoder with copy-back (see below)
+
+    .. note::
+
+        Special values can be mixed with api names. eg: ``vaapi,auto`` will try
+        and use the ``vaapi`` hwdec, and if that fails, will run through the
+        normal ``auto`` logic.
 
     Actively supported hwdecs:
 
@@ -1255,6 +1273,8 @@ Video
     :nvdec-copy: copies video back to system RAM (Any platform CUDA is available)
     :drm:       requires ``--vo=gpu`` (Linux only)
     :drm-copy:   copies video back to system RAM (Linux only)
+    :vulkan:    requires ``--vo=gpu-next`` (Any platform with Vulkan Video Decoding)
+    :vulkan-copy: copies video back to system RAM (Any platform with Vulkan Video Decoding)
 
     Other hwdecs (only use if you know you have to):
 
@@ -1310,7 +1330,8 @@ Video
     .. note::
 
        Most non-copy methods only work with the OpenGL GPU backend. Currently,
-       only the ``vaapi``, ``nvdec`` and ``cuda`` methods work with Vulkan.
+       only the ``vaapi``, ``nvdec``, ``cuda`` and ``vulkan`` methods work with
+       Vulkan.
 
     The ``vaapi`` mode, if used with ``--vo=gpu``, requires Mesa 11, and most
     likely works with Intel and AMD GPUs only. It also requires the opengl EGL
@@ -3064,6 +3085,15 @@ Window
 ``--snap-window``
     (Windows only) Snap the player window to screen edges.
 
+``--drag-and-drop=<no|auto|replace|append>``
+    (X11, Wayland and Windows only)
+    Controls the default behavior of drag and drop on platforms that support this.
+    ``auto`` will obey what the underlying os/platform gives mpv. Typically, holding
+    shift during the drag and drop will append the item to the playlist. Otherwise,
+    it will completely replace it. ``replace`` and ``append`` always force replacing
+    and appending to the playlist respectively. ``no`` disables all drag and drop
+    behavior.
+
 ``--ontop``
     Makes the player window stay on top of other windows.
 
@@ -3116,7 +3146,7 @@ Window
 
         Generally only supported by GUI VOs. Ignored for encoding.
 
-    .. admonition: Note (macOS)
+    .. admonition:: Note (macOS)
 
         On macOS, the origin of the screen coordinate system is located on the
         bottom-left corner. For instance, ``0:0`` will place the window at the
@@ -3915,6 +3945,13 @@ Demuxer
     libarchive opens all volumes anyway when playing the main file, even though
     mpv iterated no archive entries yet.
 
+``--directory-mode=<recursive|lazy|ignore>``
+    When opening a directory, open subdirectories recursively, lazily or not at
+    all (default: recursive).
+
+    Values other then ``recursive`` can lead to problems with resuming playlists
+    (`RESUMING PLAYBACK`_) and possibly other things.
+
 Input
 -----
 
@@ -4029,6 +4066,12 @@ Input
     Permit mpv to receive pointer events reported by the video output
     driver. Necessary to use the OSC, or to select the buttons in DVD menus.
     Support depends on the VO in use.
+
+``--input-cursor-passthrough``, ``--no-input-cursor-passthrough``
+    (X11 and Wayland only)
+    Tell the backend windowing system to allow pointer events to passthrough
+    the mpv window. This allows windows under mpv to instead receive pointer
+    events as if the mpv window was never there.
 
 ``--input-media-keys=<yes|no>``
     On systems where mpv can choose between receiving media keys or letting
@@ -4288,13 +4331,14 @@ Screenshot
     :jpeg:      JPEG (alias for jpg)
     :webp:      WebP
     :jxl:       JPEG XL
+    :avif:      AVIF
 
 ``--screenshot-tag-colorspace=<yes|no>``
-    Tag screenshots with the appropriate colorspace.
+    Tag screenshots with the appropriate colorspace (default: yes).
 
-    Note that not all formats are supported.
-
-    Default: ``yes``.
+    Note that not all formats support this. When it is unsupported, or when
+    this option is disabled, screenshots will be converted to sRGB before
+    being written.
 
 ``--screenshot-high-bit-depth=<yes|no>``
     If possible, write screenshots with a bit depth similar to the source
@@ -4443,20 +4487,48 @@ Screenshot
     Set the JPEG XL compression effort. Higher effort (usually) means better
     compression, but takes more CPU time. The default is 4.
 
+``--screenshot-avif-encoder=<encoder>``
+    Specify the AV1 encoder to be used by libavcodec for encoding avif
+    screenshots.
+
+    Default: ``libaom-av1``
+
+``--screenshot-avif-pixfmt=<format>``
+    Specify the pixel format to the libavcodec encoder.
+
+    Default: ``yuv420p``
+
+``--screenshot-avif-opts=key1=value1,key2=value2,...``
+    Specifies libavcodec options for selected encoder. For more information,
+    consult the FFmpeg documentation.
+
+    Default: ``usage=allintra,crf=32,cpu-used=8,tune=ssim``
+
+    Note: the default is only guaranteed to work with the libaom-av1 encoder.
+    Above options may not be valid and or optimal for other encoders.
+
+    This is a key/value list option. See `List Options`_ for details.
+
+    .. admonition:: Example
+
+        "``--screenshot-avif-opts=crf=32,aq-mode=complexity``"
+            sets the crf to 32 and quantization (aq-mode) to complexity based.
+
 ``--screenshot-sw=<yes|no>``
     Whether to use software rendering for screenshots (default: no).
 
-    If set to no, the screenshot will be rendered by the current VO if possible
-    (only vo_gpu currently). The advantage is that this will (probably) always
+    If set to no, the screenshot will be rendered by the current VO (only vo_gpu
+    or vo_gpu_next currently). The advantage is that this will (probably) always
     show up as in the video window, because the same code is used for rendering.
     But since the renderer needs to be reinitialized, this can be slow and
-    interrupt playback. (Unless the ``window`` mode is used with the
-    ``screenshot`` command.)
+    interrupt playback.
 
     If set to yes, the software scaler is used to convert the video to RGB (or
     whatever the target screenshot requires). In this case, conversion will
     run in a separate thread and will probably not interrupt playback. The
     software renderer may lack some capabilities, such as HDR rendering.
+    If ``window`` mode is used, the image will also be scaled in software
+    which may not accurately reflect the actual visible result.
 
 Software Scaler
 ---------------
@@ -5956,6 +6028,12 @@ them.
     remaining quantization artifacts. Higher numbers add more noise. (Default
     48)
 
+``--corner-rounding=<0..1>``
+    If set to a value above 0.0, the output will be rendered with rounded
+    corners, as if an alpha transparency mask had been applied. The value
+    indicates the relative fraction of the side length to round - a value of
+    1.0 rounds the corners as much as possible. (``--vo=gpu-next`` only)
+
 ``--sharpen=<value>``
     If set to a value other than 0, enable an unsharp masking filter. Positive
     values will sharpen the image (but add more ringing and aliasing). Negative
@@ -6410,6 +6488,15 @@ them.
         In such a configuration, we highly recommend setting ``--tone-mapping``
         to ``mobius`` or even ``clip``.
 
+``--target-contrast=<auto|10-1000000|inf>``
+    Specifies the measured contrast of the output display. ``--target-contrast``
+    in conjunction with ``--target-peak`` value is used to calculate display
+    black point. Used in black point compensation during HDR tone-mapping.
+    ``auto`` is the default and assumes 1000:1 contrast as a typical SDR display
+    would have or an infinite contrast when HDR ``--target-trc`` is used.
+    ``inf`` contrast specifies display with perfect black level, in practice OLED.
+    (Only for ``--vo=gpu-next``)
+
 ``--target-lut=<file>``
     Specifies a custom LUT file (in Adobe .cube format) to apply to the colors
     before display on-screen. This LUT is fed values in normalized RGB, after
@@ -6506,11 +6593,6 @@ them.
     If set, allows inverse tone mapping (expanding SDR to HDR). Not supported
     by all tone mapping curves. Use with caution. (``--vo=gpu-next`` only)
 
-``--tone-mapping-crosstalk=<0.0..0.30>``
-    If nonzero, apply an extra crosstalk matrix before tone mapping. Can help
-    improve the appearance of strongly saturated monochromatic highlights.
-    (Default: 0.04, only affects ``--vo=gpu-next``)
-
 ``--tone-mapping-max-boost=<1.0..10.0>``
     Upper limit for how much the tone mapping algorithm is allowed to boost
     the average brightness by over-exposing the image. The default value of 1.0
@@ -6559,16 +6641,36 @@ them.
     auto
         Choose the best mode automatically. (Default)
     clip
-        Hard-clip to the gamut (per-channel).
-    warn
-        Simply highlight out-of-gamut pixels.
-    desaturate
-        Chromatically desaturate out-of-gamut colors towards white.
-    darken
-        Linearly darken the entire image, then clip to the color volume. Unlike
-        ``clip``, this does not destroy detail in saturated regions, but comes
-        at the cost of sometimes significantly lowering output brightness.
+        Hard-clip to the gamut (per-channel). Very low quality, but free.
+    perceptual
+        Performs a perceptually balanced gamut mapping using a soft knee
+        function to roll-off clipped regions, and a hue shifting function to
+        preserve saturation. (``--vo=gpu-next`` only)
+    relative
+        Performs relative colorimetric clipping, while maintaining an
+        exponential relationship between brightness and chromaticity.
         (``--vo=gpu-next`` only)
+    saturation
+        Performs simple RGB->RGB saturation mapping. The input R/G/B channels
+        are mapped directly onto the output R/G/B channels. Will never clip,
+        but will distort all hues and/or result in a faded look.
+        (``--vo=gpu-next`` only)
+    absolute
+        Performs absolute colorimetric clipping. Like ``relative``, but does
+        not adapt the white point. (``--vo=gpu-next`` only)
+    desaturate
+        Performs constant-luminance colorimetric clipping, desaturing colors
+        towards white until they're in-range.
+    darken
+        Uniformly darkens the input slightly to prevent clipping on blown-out
+        highlights, then clamps colorimetrically to the input gamut boundary,
+        biased slightly to preserve chromaticity over luminance.
+        (``--vo=gpu-next`` only)
+    warn
+        Performs no gamut mapping, but simply highlights out-of-gamut pixels.
+    linear
+        Linearly/uniformly desaturates the image in order to bring the entire
+        image into the target gamut. (``--vo=gpu-next`` only)
 
 ``--hdr-compute-peak=<auto|yes|no>``
     Compute the HDR peak and frame average brightness per-frame instead of
@@ -6612,6 +6714,18 @@ them.
     aggressive, up to the limit of the high threshold (at which point the
     filter becomes instant).
 
+``--hdr-contrast-recovery=<0.0..2.0>``, ``--hdr-contrast-smoothness=<1.0..100.0>``
+    Enables the HDR contrast recovery algorithm, which is to designed to
+    enhance contrast of HDR video after tone mapping. The strength (default:
+    0.0) indicates the degree of contrast recovery, with 0.0 being completely
+    disabled and 1.0 being 100% strength. Values higher than 1.0 are allowed,
+    but may result in excessive sharpening. The smoothness (default: 3.5)
+    indicates the degree to which the HDR source is low-passed in order to
+    obtain contrast information - a value of 2.0 corresponds to 2x downscaling.
+    Users on low DPI displays (<= 100) may want to lower this value, while
+    users on very high DPI displays ("retina") may want to increase it. (Only
+    for ``vo=gpu-next``)
+
 ``--use-embedded-icc-profile``
     Load the embedded ICC profile contained in media files such as PNG images.
     (Default: yes). Note that this option only works when also using a display
@@ -6635,10 +6749,10 @@ them.
 
 ``--icc-cache``
     Store and load 3D LUTs created from the ICC profile on disk in the
-    cache directory. This can be used to speed up loading, since LittleCMS
-    2 can take a while to create a 3D LUT. Note that these files contain
-    uncompressed LUTs. Their size depends on the ``--icc-3dlut-size``, and
-    can be very big.
+    cache directory (Default: ``yes``). This can be used to speed up loading,
+    since LittleCMS 2 can take a while to create a 3D LUT. Note that these
+    files contain uncompressed LUTs. Their size depends on the
+    ``--icc-3dlut-size``, and can be very big.
 
     NOTE: This is not cleaned automatically, so old, unused cache files may
     stick around indefinitely.
@@ -6783,11 +6897,11 @@ them.
     This option might be silently removed in the future.
 
 ``--gpu-shader-cache``
-    Store and load compiled GLSL shaders in the cache directory. Normally, shader
-    compilation is very fast, so this is not usually needed. It mostly matters
-    for GPU APIs that require internally recompiling shaders to other languages,
-    for example anything based on ANGLE or Vulkan. Enabling this can improve
-    startup performance on these platforms.
+    Store and load compiled GLSL shaders in the cache directory (Default: ``yes``).
+    Normally, shader compilation is very fast, so this is not usually needed.
+    It mostly matters for GPU APIs that require internally recompiling shaders to
+    other languages, for example anything based on ANGLE or Vulkan. Enabling this
+    can improve startup performance on these platforms.
 
     NOTE: This is not cleaned automatically, so old, unused cache files may
     stick around indefinitely.

@@ -1,6 +1,7 @@
 name: Build mpv on MacOS
 env:
-  branch: 'mod-0.35.1'
+  #branch: 'mod-0.35.1'
+  branch: 'master'
 
 on: 
   workflow_dispatch:

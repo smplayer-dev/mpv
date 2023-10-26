@@ -16,9 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - { name: 'xenial', os: 'ubuntu-latest', container: 'wachii/ubuntu-qt:16.04' }
-          - { name: 'bionic', os: 'ubuntu-latest', container: 'wachii/ubuntu-qt:18.04' }
-          - { name: 'focal', os: 'ubuntu-20.04', container: '' }
+          #- { name: 'xenial', os: 'ubuntu-latest', container: 'wachii/ubuntu-qt:16.04' }
+          #- { name: 'bionic', os: 'ubuntu-latest', container: 'wachii/ubuntu-qt:18.04' }
+          #- { name: 'focal', os: 'ubuntu-20.04', container: '' }
           - { name: 'jammy', os: 'ubuntu-22.04', container: '' }
 
     runs-on: ${{ matrix.config.os }}

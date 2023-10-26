@@ -12,7 +12,7 @@ srcdir = os.path.dirname(os.path.abspath(sys.argv[0]))
 git_dir = os.path.join(srcdir, ".git")
 git = which('git')
 
-if git and os.path.exists(git_dir):
+if False and git and os.path.exists(git_dir):
     # stdin is set to DEVNULL to workaround waf preforking issues
     version = check_output([git, "-C", srcdir, "describe", "--always", "--tags",
                             "--dirty"], stdin=DEVNULL, encoding="UTF-8")
